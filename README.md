@@ -130,18 +130,18 @@ python -m venv .venv && .venv/bin/pip install -e .
 .venv/bin/python -m unittest discover -s tests
 ```
 
-The `xiaoyu-agent` dependency is pinned to a **commit**, not a version. The
-adapter reaches past xiaoyu's CLI into its library surface (`AcpServer`,
-`Toolbox`, `McpManager`), which a release is free to reshape — but the immediate
-reason is sharper: `Toolbox(mcp_view=...)` is only honored for a full toolbox as
-of the pinned commit, and that change landed without a version bump. `0.32.0`
-therefore names two different behaviors, and the one published to PyPI is the one
-where this adapter's MCP injection is silently dropped. No version specifier can
-distinguish them.
+The `xiaoyu-agent` dependency is pinned exactly, not ranged: the adapter reaches
+past xiaoyu's CLI into its library surface (`AcpServer`, `Toolbox`,
+`McpManager`), which a release is free to reshape.
 
-`factory.py` asserts the behavior at session build for the same reason, so an
-unsuitable build fails loudly instead of yielding a session with no capabilities.
-The pin becomes `xiaoyu-agent==0.33.0` once that release ships.
+`0.33.0` is the floor for a working adapter rather than a preference — it is the
+first release where `Toolbox(mcp_view=...)` is honored for a full toolbox. Before
+it, the injection was accepted and silently dropped: the session came up healthy
+with none of the agent spec's MCP servers and the operator's own `mcp.json` in
+their place. `factory.py` asserts that behavior at session build rather than
+trusting the pin, because the fix once existed unreleased under an
+already-published version number and no version specifier could tell the two
+apart. That assertion stays as a sentinel against future drift.
 
 ## License
 

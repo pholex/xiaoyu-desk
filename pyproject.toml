@@ -9,21 +9,20 @@ description = "Xiaoyu Desk — a KiroCrew distribution driven by the xiaoyu agen
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
-# Pinned to a commit, not a version. Two reasons, and the second is why a
-# version pin is not merely inconvenient but wrong:
+# Pinned exactly, not ranged: the adapter reaches past xiaoyu's CLI into its
+# library surface (AcpServer, Toolbox, McpManager), which a release is free to
+# reshape. Upgrading is a deliberate edit plus a test run.
 #
-# 1. The adapter reaches past xiaoyu's CLI into its library surface (AcpServer,
-#    Toolbox, McpManager), which a minor release is free to reshape.
-# 2. `Toolbox(mcp_view=...)` is only honored for a full toolbox as of this
-#    commit, and that landed WITHOUT a version bump — so "0.32.0" names two
-#    different behaviors, and the one on PyPI is the one where the adapter's MCP
-#    injection is silently dropped. A version specifier cannot tell them apart.
-#
-# Switch to `xiaoyu-agent==0.33.0` once that release ships — it is the version
-# that will carry this commit (0.33 rather than 0.32.1 because the same unreleased
-# range also adds per-session ACP concurrency, which is a feature, not a patch).
+# 0.33.0 is the floor for a working adapter, not just a preference: it is the
+# first release where `Toolbox(mcp_view=...)` is honored for a FULL toolbox.
+# Before it, the injection was accepted and silently dropped — the session came
+# up healthy with none of the agent spec's MCP servers and the operator's own
+# mcp.json in their place. `factory.py` asserts that behavior at session build
+# rather than trusting this pin, because the fix once existed unreleased under an
+# already-published version number, and no version specifier could tell the two
+# apart. That assertion stays as a sentinel against any future drift.
 dependencies = [
-    "xiaoyu-agent @ git+https://github.com/pholex/zhinu.git@cc6757ff89806d78c3f84b80c0e0a70ba8a8932c",
+    "xiaoyu-agent==0.33.0",
 ]
 
 [project.scripts]
