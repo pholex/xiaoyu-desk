@@ -130,9 +130,18 @@ python -m venv .venv && .venv/bin/pip install -e .
 .venv/bin/python -m unittest discover -s tests
 ```
 
-The `xiaoyu-agent` dependency is pinned exactly, not ranged: the adapter reaches
-past xiaoyu's CLI into its library surface (`AcpServer`, `Toolbox`,
-`McpManager`), and a minor release is free to reshape that.
+The `xiaoyu-agent` dependency is pinned to a **commit**, not a version. The
+adapter reaches past xiaoyu's CLI into its library surface (`AcpServer`,
+`Toolbox`, `McpManager`), which a release is free to reshape — but the immediate
+reason is sharper: `Toolbox(mcp_view=...)` is only honored for a full toolbox as
+of the pinned commit, and that change landed without a version bump. `0.32.0`
+therefore names two different behaviors, and the one published to PyPI is the one
+where this adapter's MCP injection is silently dropped. No version specifier can
+distinguish them.
+
+`factory.py` asserts the behavior at session build for the same reason, so an
+unsuitable build fails loudly instead of yielding a session with no capabilities.
+The pin becomes `xiaoyu-agent==0.33.0` once that release ships.
 
 ## License
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from xiaoyu.config import Config
 from xiaoyu.mcp import McpManager, McpView, ServerSpec
@@ -66,14 +67,20 @@ class TestMcpProvider(unittest.TestCase):
 
     def test_sessions_share_one_manager(self):
         # Per-session managers would multiply every server process by the session
-        # count; kiro-cli starts its servers once per process.
+        # count; kiro-cli starts its servers once per process. Asserted by
+        # counting constructions rather than by reading the manager back off a
+        # view: McpView's contract is that it holds no process and its lifetime
+        # belongs to the manager, so it deliberately offers no reverse lookup.
         provider = McpProvider(AgentSpec(name="a", servers=[]))
-        try:
-            first, second = provider.view(), provider.view()
-            self.assertIsNot(first, second)
-            self.assertIs(first._manager, second._manager)
-        finally:
-            provider.close()
+        with mock.patch(
+            "xiaoyu_desk.acp.factory.McpManager", wraps=McpManager
+        ) as constructed:
+            try:
+                first, second = provider.view(), provider.view()
+            finally:
+                provider.close()
+        self.assertIsNot(first, second)
+        self.assertEqual(constructed.call_count, 1)
 
     def test_close_is_idempotent(self):
         # Nothing else reaps these processes, so close runs on every exit path
