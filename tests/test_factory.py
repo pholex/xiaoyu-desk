@@ -1,0 +1,87 @@
+"""Session-factory tests, centered on the MCP injection actually taking effect."""
+
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from xiaoyu.config import Config
+from xiaoyu.mcp import McpManager, McpView, ServerSpec
+from xiaoyu.tools import Toolbox
+
+from xiaoyu_desk.acp.agentspec import AgentSpec
+from xiaoyu_desk.acp.factory import McpProvider, _assert_view_honored
+
+
+def _config() -> Config:
+    with tempfile.TemporaryDirectory() as tmp:
+        return Config.from_env(workspace=Path(tmp), workspace_trusted=False)
+
+
+class TestViewIsHonored(unittest.TestCase):
+    """The injection must reach the toolbox, not merely be handed to it.
+
+    This is the failure that end-to-end testing caught and a naive unit test did
+    not: asserting on the VIEW proves the view works, while the toolbox quietly
+    used config discovery instead. Assert on what the toolbox ended up with.
+    """
+
+    def test_full_toolbox_uses_the_injected_view(self):
+        # No specs => no server processes, so this stays a pure wiring check.
+        view = McpView(McpManager([]), "all")
+        toolbox = Toolbox(_config(), mcp_view=view)
+        self.assertIs(toolbox.mcp_manager, view)
+
+    def test_guard_accepts_a_toolbox_that_honored_the_view(self):
+        view = McpView(McpManager([]), "all")
+        toolbox = Toolbox(_config(), mcp_view=view)
+        _assert_view_honored(toolbox, view)  # must not raise
+
+    def test_guard_rejects_a_toolbox_that_fell_back_to_discovery(self):
+        # Models the older xiaoyu build: mcp_view accepted, then ignored for a
+        # full toolbox. The session would come up healthy with the wrong servers.
+        view = McpView(McpManager([]), "all")
+
+        class _IgnoringToolbox:
+            mcp_manager = "whatever config discovery produced"
+
+        with self.assertRaises(RuntimeError) as caught:
+            _assert_view_honored(_IgnoringToolbox(), view)
+        self.assertIn("mcp_view", str(caught.exception))
+
+
+class TestMcpProvider(unittest.TestCase):
+    def test_a_spec_with_no_servers_still_yields_a_view(self):
+        # Returning None here would let Toolbox fall back to config discovery and
+        # hand the session the operator's personal mcp.json — servers the agent
+        # spec never granted it. "No servers" must mean no servers.
+        provider = McpProvider(AgentSpec(name="a", servers=[]))
+        try:
+            view = provider.view()
+            self.assertIsInstance(view, McpView)
+            self.assertEqual(view.ready_tools(), [])
+        finally:
+            provider.close()
+
+    def test_sessions_share_one_manager(self):
+        # Per-session managers would multiply every server process by the session
+        # count; kiro-cli starts its servers once per process.
+        provider = McpProvider(AgentSpec(name="a", servers=[]))
+        try:
+            first, second = provider.view(), provider.view()
+            self.assertIsNot(first, second)
+            self.assertIs(first._manager, second._manager)
+        finally:
+            provider.close()
+
+    def test_close_is_idempotent(self):
+        # Nothing else reaps these processes, so close runs on every exit path
+        # and may well run twice.
+        provider = McpProvider(AgentSpec(name="a", servers=[ServerSpec(name="s", command="true")]))
+        provider.close()
+        provider.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

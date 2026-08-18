@@ -9,11 +9,19 @@ description = "Xiaoyu Desk — a KiroCrew distribution driven by the xiaoyu agen
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
-# Pinned exactly, not ranged: the adapter reaches past xiaoyu's CLI into its
-# library surface (AcpServer, Toolbox, McpManager), and a minor release is free
-# to reshape that. Upgrading is a deliberate edit plus a test run.
+# Pinned to a commit, not a version. Two reasons, and the second is why a
+# version pin is not merely inconvenient but wrong:
+#
+# 1. The adapter reaches past xiaoyu's CLI into its library surface (AcpServer,
+#    Toolbox, McpManager), which a minor release is free to reshape.
+# 2. `Toolbox(mcp_view=...)` is only honored for a full toolbox as of this
+#    commit, and that landed WITHOUT a version bump — so "0.32.0" names two
+#    different behaviors, and the one on PyPI is the one where the adapter's MCP
+#    injection is silently dropped. A version specifier cannot tell them apart.
+#
+# Switch to a released version once one ships that contains this commit.
 dependencies = [
-    "xiaoyu-agent==0.32.0",
+    "xiaoyu-agent @ git+https://github.com/pholex/zhinu.git@cc6757ff89806d78c3f84b80c0e0a70ba8a8932c",
 ]
 
 [project.scripts]

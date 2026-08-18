@@ -78,6 +78,30 @@ class McpProvider:
                 self._manager = None
 
 
+def _assert_view_honored(toolbox: Toolbox, view: McpView) -> None:
+    """Fail loudly if the installed xiaoyu ignored the injected MCP view.
+
+    Older ``Toolbox`` builds accept ``mcp_view`` but only consult it for the
+    restricted-subset path, silently falling back to config discovery for a full
+    toolbox. Nothing raises: the session starts, reports healthy, and simply has
+    none of the agent spec's servers — while the operator's personal ``mcp.json``
+    takes their place. That is both a capability loss and a scope leak, and it is
+    invisible until a model says a tool does not exist.
+
+    A version check would not catch it (the fix shipped without a version bump,
+    so one version string names two different behaviors), so this asserts the
+    behavior itself through the public accessor.
+    """
+    if toolbox.mcp_manager is not view:
+        raise RuntimeError(
+            "the installed xiaoyu-agent ignores Toolbox(mcp_view=...) for a full "
+            "toolbox, so this session would silently run without the agent spec's "
+            "MCP servers and with the operator's own mcp.json instead. Upgrade "
+            "xiaoyu-agent to a build where an explicit mcp_view takes precedence "
+            "over config discovery."
+        )
+
+
 def build_factory(
     spec: AgentSpec,
     mcp: McpProvider,
@@ -132,9 +156,13 @@ def build_factory(
                 session_name, config.model, str(config.workspace)
             )
 
+        view = mcp.view()
+        toolbox = Toolbox(config, mcp_view=view)
+        _assert_view_honored(toolbox, view)
+
         agent = Agent(
             config,
-            Toolbox(config, mcp_view=mcp.view()),
+            toolbox,
             approver=approver,
             session_log=session_log,
             permissions=permissions,
