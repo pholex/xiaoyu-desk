@@ -94,6 +94,19 @@ So the adapter reads it and injects:
 unresolvable one fails in the server that needs it rather than quietly becoming
 an empty string.
 
+**KiroCrew's own environment is forwarded to those servers.** xiaoyu builds a
+stdio server's environment from a whitelist instead of inheriting one — a sound
+default for arbitrary third-party servers, and wrong for these: `kirocrew-core`
+and friends *are* KiroCrew, and without `KIROCREW_HOME` they resolve the
+**default** data home rather than this session's. On a machine running a second
+instance that means they read state from, and dial the gateway of, the wrong
+one — silently, because reads succeed against a real instance and only calls
+needing a session identity are refused. So the adapter forwards `KIROCREW_*` and
+`KIRO_HOME` into each server's env, restoring the footing kiro-cli's servers get
+by plain inheritance. A value declared in the agent spec always wins over the
+forwarded one, and nothing forwarded is a credential — the gateway scrubs channel
+tokens from this process's environment before it is spawned.
+
 ## Sandboxing
 
 xiaoyu's own sandbox wraps only the commands its bash tool runs — not its own
@@ -110,6 +123,26 @@ exist or does not set `sandbox` to true. KiroCrew skips its own seatbelt for wha
 it believes is `kiro-cli`'s internal sandbox when that flag is on — and this
 adapter has no such internal sandbox. A missing file reads as false, so a machine
 without `kiro-cli` installed is already correct.
+
+## Running on a non-default port
+
+If you start the gateway with `--port`, **also set `dashboard.url` in the data
+home's `config.json`**:
+
+```json
+{"dashboard": {"url": "http://localhost:8899"}}
+```
+
+KiroCrew's MCP servers resolve the gateway they call back into from
+`dashboard.url` alone — nothing tells them which port the gateway actually bound.
+Left empty they dial the default port, which on a machine already running
+KiroCrew is *another instance's* gateway. Every internal call is then rejected
+with a bare `Forbidden`, and only the calls that need it fail: reads go through,
+`spawn_run` and friends do not. Nothing in the message points at the port.
+
+This is not specific to this adapter — it is how KiroCrew's MCP bridge resolves
+its own gateway — but you will meet it the first time you run a second instance
+alongside the app, which is exactly what testing this adapter invites.
 
 ## Known gaps
 

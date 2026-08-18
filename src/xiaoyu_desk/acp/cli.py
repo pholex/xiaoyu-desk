@@ -8,6 +8,7 @@ all of which this entry point answers::
     <bin> --version                       # first-run readiness probe
     <bin> whoami                          # first-run readiness probe
     <bin> acp --agent NAME [--model ID]   # the ACP session itself
+    <bin> chat --list-models --format json --no-interactive   # the model picker
 
 Unknown flags are tolerated rather than rejected. The argv is built by another
 program on its own release schedule, and a new flag there must not turn every
@@ -17,6 +18,7 @@ session into a spawn failure.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
@@ -35,6 +37,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("command", nargs="?", default="")
     parser.add_argument("--agent", default="")
     parser.add_argument("--model", default="")
+    parser.add_argument("--list-models", action="store_true")
     parser.add_argument(
         "--agents-dir",
         default="",
@@ -42,6 +45,45 @@ def _parser() -> argparse.ArgumentParser:
         "(or ~/.kiro/agents), which is where KiroCrew writes them.",
     )
     return parser
+
+
+def list_models() -> int:
+    """Print xiaoyu's model catalog in the shape KiroCrew's picker reads.
+
+    KiroCrew polls this every few seconds while the picker is degraded and
+    reads the WHOLE of stdout as one JSON object, so nothing else may be
+    printed there. A non-zero exit leaves the picker on its fallback, which is
+    the right outcome when no provider is configured — better an honest
+    fallback than a confidently empty list.
+
+    Rows are the declared catalog, not an entitlement claim: KiroCrew narrows
+    them against what a live session advertises before rendering.
+    """
+    # The wizard writes provider keys to the user-level .env, and this runs as a
+    # bare one-shot with none of the session setup, so read it here or the
+    # catalog comes back empty on a perfectly well-configured machine.
+    from xiaoyu.config import Config, MissingConfig, context_window, load_dotenv, user_env_path
+
+    load_dotenv(explicit=user_env_path())
+    from xiaoyu import providers
+
+    try:
+        registry = providers.build(Config.from_env())
+    except MissingConfig as exc:
+        print(f"xiaoyu-desk-acp: no model provider configured ({exc})", file=sys.stderr)
+        return 1
+
+    models = [
+        {
+            "model_name": entry.model,
+            "model_id": entry.model,
+            "context_window_tokens": context_window(entry.model),
+            "provider": entry.owner_label,
+        }
+        for entry in registry.listing()
+    ]
+    print(json.dumps({"models": models}, ensure_ascii=False))
+    return 0
 
 
 def serve(agent: str, model: str, directory: str) -> int:
@@ -91,10 +133,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     parsed, _unknown = _parser().parse_known_args(args)
+    if parsed.command == "chat" and parsed.list_models:
+        return list_models()
     if parsed.command != "acp":
         print(
             f"xiaoyu-desk-acp: unknown command {parsed.command!r} "
-            "(expected 'acp', '--version', or 'whoami')",
+            "(expected 'acp', 'chat --list-models', '--version', or 'whoami')",
             file=sys.stderr,
         )
         return 2

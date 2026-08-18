@@ -43,6 +43,31 @@ from xiaoyu.mcp import ServerSpec
 #: resolve it the same way or it reads a directory KiroCrew never wrote to.
 DEFAULT_KIRO_HOME = "~/.kiro"
 
+#: Environment the agent spec's MCP servers must inherit from this process.
+#:
+#: xiaoyu builds a stdio server's environment from a whitelist rather than
+#: inheriting — a sound default for arbitrary third-party servers. But KiroCrew's
+#: own servers ARE KiroCrew: without ``KIROCREW_HOME`` they resolve the DEFAULT
+#: data home instead of this session's, and then read another instance's state,
+#: dial another instance's gateway, and refuse anything that needs a session
+#: identity they can no longer resolve. kiro-cli's servers inherit its
+#: environment wholesale, so this restores the same footing.
+#:
+#: Nothing here is a credential. The gateway scrubs channel tokens from this
+#: process's environment before spawning it, so what remains is exactly the set
+#: KiroCrew intends its agent tree to carry.
+_FORWARDED_ENV_PREFIXES = ("KIROCREW_",)
+_FORWARDED_ENV_KEYS = ("KIRO_HOME",)
+
+
+def forwarded_env() -> dict[str, str]:
+    """KiroCrew-owned environment this process must pass to its MCP servers."""
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key.startswith(_FORWARDED_ENV_PREFIXES) or key in _FORWARDED_ENV_KEYS
+    }
+
 
 class AgentSpecError(Exception):
     """The named agent spec is missing or unreadable."""
@@ -91,15 +116,18 @@ def _servers_from(raw: object) -> list[ServerSpec]:
             continue
         args = [str(a) for a in entry.get("args", []) if isinstance(a, (str, int, float))]
         env_raw = entry.get("env")
-        env = (
+        declared = (
             {str(k): str(v) for k, v in env_raw.items()} if isinstance(env_raw, dict) else {}
         )
+        # Forwarded first so the spec's own declarations win: the file is the
+        # operator's explicit statement about this server and must not be
+        # overridden by what happens to be in this process's environment.
         specs.append(
             ServerSpec(
                 name=name,
                 command=command,
                 args=args,
-                env=env,
+                env={**forwarded_env(), **declared},
                 disabled=bool(entry.get("disabled", False)),
             )
         )

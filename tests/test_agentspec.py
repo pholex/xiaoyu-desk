@@ -7,8 +7,9 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from xiaoyu_desk.acp.agentspec import AgentSpecError, agents_dir, load
+from xiaoyu_desk.acp.agentspec import AgentSpecError, agents_dir, forwarded_env, load
 
 
 def _write(directory: Path, name: str, data: dict) -> None:
@@ -35,7 +36,11 @@ class TestAgentsDir(unittest.TestCase):
 
 
 class TestLoad(unittest.TestCase):
+    @mock.patch.dict(os.environ, {}, clear=True)
     def test_prompt_and_servers_are_translated(self):
+        # Cleared env so the exact-equality assertion below stays true wherever
+        # this runs: under a real gateway the process DOES carry KIROCREW_*, and
+        # forwarding it is the point of test_kirocrew_env_is_forwarded_to_servers.
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
             _write(directory, "kirocrew", {
@@ -92,6 +97,36 @@ class TestLoad(unittest.TestCase):
             })
             spec = load("a", directory)
         self.assertEqual([s.name for s in spec.servers], ["local"])
+
+    def test_kirocrew_env_is_forwarded_to_servers(self):
+        # xiaoyu builds a stdio server's env from a whitelist rather than
+        # inheriting it. KiroCrew's own servers need KIROCREW_HOME or they bind
+        # to the DEFAULT data home — on a machine running a second instance that
+        # means they read and dial the WRONG one, silently.
+        with mock.patch.dict(os.environ, {"KIROCREW_HOME": "/data/home", "KIRO_HOME": "/k"}):
+            with tempfile.TemporaryDirectory() as tmp:
+                directory = Path(tmp)
+                _write(directory, "a", {"mcpServers": {"s": {"command": "x"}}})
+                spec = load("a", directory)
+        self.assertEqual(spec.servers[0].env["KIROCREW_HOME"], "/data/home")
+        self.assertEqual(spec.servers[0].env["KIRO_HOME"], "/k")
+
+    def test_spec_env_wins_over_forwarded_env(self):
+        # The file is the operator's explicit statement about this server.
+        with mock.patch.dict(os.environ, {"KIROCREW_HOME": "/from/env"}):
+            with tempfile.TemporaryDirectory() as tmp:
+                directory = Path(tmp)
+                _write(directory, "a", {
+                    "mcpServers": {"s": {"command": "x", "env": {"KIROCREW_HOME": "/from/spec"}}}
+                })
+                spec = load("a", directory)
+        self.assertEqual(spec.servers[0].env["KIROCREW_HOME"], "/from/spec")
+
+    def test_forwarded_env_carries_no_unrelated_variables(self):
+        with mock.patch.dict(os.environ, {"KIROCREW_HOME": "/h", "AWS_SECRET_ACCESS_KEY": "x"}):
+            forwarded = forwarded_env()
+        self.assertIn("KIROCREW_HOME", forwarded)
+        self.assertNotIn("AWS_SECRET_ACCESS_KEY", forwarded)
 
     def test_missing_spec_raises_rather_than_starting_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
