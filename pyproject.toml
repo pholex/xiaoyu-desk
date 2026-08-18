@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xiaoyu-desk"
+version = "0.1.0"
+description = "Xiaoyu Desk — a KiroCrew distribution driven by the xiaoyu agent"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+# Pinned exactly, not ranged: the adapter reaches past xiaoyu's CLI into its
+# library surface (AcpServer, Toolbox, McpManager), and a minor release is free
+# to reshape that. Upgrading is a deliberate edit plus a test run.
+dependencies = [
+    "xiaoyu-agent==0.32.0",
+]
+
+[project.scripts]
+# What KIROCREW_KIRO_BIN points at.
+xiaoyu-desk-acp = "xiaoyu_desk.acp.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
