@@ -2,4 +2,4 @@
 
 #: Single source of truth for the version; pyproject reads it dynamically so the
 #: two can never drift.
-__version__ = "0.0.1"
+__version__ = "0.0.2"

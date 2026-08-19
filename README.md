@@ -5,7 +5,8 @@ Run [KiroCrew](https://github.com/kirodotdev/KiroCrew) on the
 
 > **Closed beta.** Working and used daily, but read [Known
 > limitations](#known-limitations) before you rely on it — a few KiroCrew
-> features do not work through this adapter yet, and one of them fails silently.
+> features do not work through this adapter yet. None of them fails silently
+> any more: each is either an explicit refusal or a panel with nothing in it.
 
 KiroCrew drives its LLM through an ACP agent process and requires `kiro-cli` — a
 closed-source binary that cannot be redistributed and that signs in to an Amazon
