@@ -3,30 +3,114 @@
 Run [KiroCrew](https://github.com/kirodotdev/KiroCrew) on the
 [xiaoyu](https://github.com/pholex/zhinu) agent instead of `kiro-cli`.
 
+> **Closed beta.** Working and used daily, but read [Known
+> limitations](#known-limitations) before you rely on it — a few KiroCrew
+> features do not work through this adapter yet, and one of them fails silently.
+
 KiroCrew drives its LLM through an ACP agent process and requires `kiro-cli` — a
 closed-source binary that cannot be redistributed and that signs in to an Amazon
 account. xiaoyu is an independent MIT-licensed coding agent that already speaks
 ACP. This package is the adapter between them.
 
-**KiroCrew is not modified.** It is not forked, patched, or vendored here. The
+**You bring your own model.** Any of xiaoyu's providers — DeepSeek, Moonshot,
+Qwen, Zhipu, Anthropic, OpenAI, xAI, or any OpenAI-compatible gateway. One API
+key, no account to register.
+
+**KiroCrew is not modified.** Not forked, not patched, not vendored here. The
 adapter is a standalone executable that KiroCrew launches through
-`KIROCREW_KIRO_BIN`, its own documented override — so upstream KiroCrew can be
-updated with a plain `git pull` or a reinstall, forever, with nothing to re-merge.
+`KIROCREW_KIRO_BIN`, its own documented override — so you keep updating KiroCrew
+normally, forever, with nothing to re-merge.
+
+## Requirements
+
+- Python 3.11+
+- KiroCrew, installed and working
+- An API key for one of xiaoyu's providers, or an OpenAI-compatible gateway
+
+`kiro-cli` is **not** required. If it is installed, it is left alone.
 
 ## Install
 
 ```bash
-pip install -e .
-```
+# 1. the adapter
+pip install git+https://github.com/pholex/xiaoyu-desk
 
-## Use
+# 2. point xiaoyu at your model (interactive wizard, writes a user-level .env)
+xiaoyu config
 
-```bash
+# 3. run KiroCrew on it
 KIROCREW_KIRO_BIN=$(which xiaoyu-desk-acp) kirocrew gateway
 ```
 
-xiaoyu needs its own provider configured (`xiaoyu config`) — an API key or an
-OpenAI-compatible gateway. There is no account to sign in to.
+Make step 3 permanent by exporting `KIROCREW_KIRO_BIN` from your shell profile,
+or by putting it in whatever launches your gateway.
+
+To go back to `kiro-cli`, unset the variable. Nothing else changes.
+
+## Known limitations
+
+**Read this before relying on it.** The first two are the ones people hit.
+
+- **Mid-turn steer does nothing, and does not say so.** KiroCrew believes this
+  backend implements steer; xiaoyu has no equivalent, so the request is answered
+  "not implemented" and dropped. Pressing steer produces no error and no effect.
+  Use Stop and send a new message instead.
+- **Only the agent the gateway started with is available.** Per-session agent
+  switching is refused, so alternate agents (`kirocrew-lite`, `-research`,
+  `-heartbeat`, `-knowledge`) cannot be selected from the session picker. The
+  refusal is explicit — the session fails with a message rather than silently
+  running the wrong agent.
+- **Compaction status, agent-switched notices, and the TODO panel stay empty.**
+  Those are `kiro-cli`-specific notifications that xiaoyu never emits. Nothing
+  breaks; the panels just have nothing to show.
+- **The "not signed in" hint is generic.** With no provider configured you get a
+  generic error rather than "run `xiaoyu config`".
+
+Verified working: streaming chat, tool approval (allow and reject), Stop,
+background subagents with parent/subagent concurrency, MCP tools, the model
+picker and switching, and conversation continuity across an agent restart.
+
+Not yet exercised: cron jobs, Slack/Discord channels, long-conversation
+compaction, artifacts, knowledge, task runner, apps. Tested on macOS only.
+
+## Running a second instance on a non-default port
+
+If you start a gateway with `--port`, **also set `dashboard.url` in that data
+home's `config.json`**:
+
+```json
+{"dashboard": {"url": "http://localhost:8899"}}
+```
+
+KiroCrew's MCP servers resolve the gateway they call back into from
+`dashboard.url` alone — nothing tells them which port the gateway actually bound.
+Left empty they dial the default port, which on a machine already running
+KiroCrew is *another instance's* gateway. Internal calls are then rejected with a
+bare `Forbidden`, and only the calls that need it fail: reads go through,
+`spawn_run` and friends do not. Nothing in the message points at the port.
+
+This is how KiroCrew's MCP bridge resolves its own gateway, not something the
+adapter introduces — but you meet it the first time you run a second instance
+alongside the app, which is exactly what evaluating this invites.
+
+## Sandboxing
+
+xiaoyu's own sandbox wraps only the commands its bash tool runs — not its own
+file writes. KiroCrew's sandbox wraps this entire process tree, so it is the
+layer that actually covers everything, and on macOS the two cannot nest (a
+seatbelt inside a seatbelt fails `EPERM`).
+
+The adapter therefore sets `XIAOYU_SANDBOX=0` with `setdefault`. **If you run
+KiroCrew with its own sandbox disabled, export `XIAOYU_SANDBOX=1`** to get
+xiaoyu's layer back; an explicit value is always respected.
+
+On macOS, also confirm `~/.kiro/settings/amazon-internal.json` either does not
+exist or does not set `sandbox` to true. KiroCrew skips its own seatbelt for what
+it believes is `kiro-cli`'s internal sandbox when that flag is on — and this
+adapter has no such internal sandbox. A missing file reads as false, so a machine
+without `kiro-cli` installed is already correct.
+
+---
 
 ## How it works
 
@@ -37,9 +121,9 @@ stabilized and were **removed from ACP on 2026-06-01**, with model selection
 moving to Session Config Options. xiaoyu implements the current standard. The two
 cannot talk without a translator, and that translator is the whole job here.
 
-The adapter injects in two places, both of which are ordinary constructor
-arguments of xiaoyu's `AcpServer`. Nothing in xiaoyu was changed to accommodate
-this, and nothing in KiroCrew was either.
+The adapter injects in two places, both ordinary constructor arguments of
+xiaoyu's `AcpServer`. Nothing in xiaoyu was changed to accommodate this, and
+nothing in KiroCrew was either.
 
 ### 1. The wire (`proxy.py`)
 
@@ -67,7 +151,6 @@ A `session/set_mode` naming that agent is acknowledged; naming any other one is
 **refused, not faked**. Acknowledging a switch that did not happen would leave the
 session on the spawned agent while KiroCrew believed it had moved to another —
 silently widening what the model may do whenever the requested agent is narrower.
-Per-session agent switching is simply not supported yet, and it says so.
 
 ### 2. The session factory (`factory.py`, `agentspec.py`)
 
@@ -117,55 +200,6 @@ by plain inheritance. A value declared in the agent spec always wins over the
 forwarded one, and nothing forwarded is a credential — the gateway scrubs channel
 tokens from this process's environment before it is spawned.
 
-## Sandboxing
-
-xiaoyu's own sandbox wraps only the commands its bash tool runs — not its own
-file writes. KiroCrew's sandbox wraps this entire process tree, so it is the
-layer that actually covers everything, and on macOS the two cannot nest (a
-seatbelt inside a seatbelt fails `EPERM`).
-
-The adapter therefore sets `XIAOYU_SANDBOX=0` with `setdefault`. **If you run
-KiroCrew with its own sandbox disabled, export `XIAOYU_SANDBOX=1`** to get
-xiaoyu's layer back; the explicit value is respected.
-
-On macOS, also confirm `~/.kiro/settings/amazon-internal.json` either does not
-exist or does not set `sandbox` to true. KiroCrew skips its own seatbelt for what
-it believes is `kiro-cli`'s internal sandbox when that flag is on — and this
-adapter has no such internal sandbox. A missing file reads as false, so a machine
-without `kiro-cli` installed is already correct.
-
-## Running on a non-default port
-
-If you start the gateway with `--port`, **also set `dashboard.url` in the data
-home's `config.json`**:
-
-```json
-{"dashboard": {"url": "http://localhost:8899"}}
-```
-
-KiroCrew's MCP servers resolve the gateway they call back into from
-`dashboard.url` alone — nothing tells them which port the gateway actually bound.
-Left empty they dial the default port, which on a machine already running
-KiroCrew is *another instance's* gateway. Every internal call is then rejected
-with a bare `Forbidden`, and only the calls that need it fail: reads go through,
-`spawn_run` and friends do not. Nothing in the message points at the port.
-
-This is not specific to this adapter — it is how KiroCrew's MCP bridge resolves
-its own gateway — but you will meet it the first time you run a second instance
-alongside the app, which is exactly what testing this adapter invites.
-
-## Known gaps
-
-- **Mid-turn steer does not work.** KiroCrew believes this backend implements
-  `_session/steer`; xiaoyu does not, so the request is answered `-32601` and
-  dropped. Pressing steer produces no error and no effect.
-- **Per-session agent switching is refused** (see above).
-- **`_kiro.dev/compaction/status`, `agent/switched`, and the TODO panel stay
-  empty.** They are kiro-cli-specific notifications that xiaoyu never emits.
-- **The "not signed in" hint is generic.** xiaoyu answers `-32000 auth_required`
-  when no provider is configured, while KiroCrew detects auth failures by a
-  stderr pattern, so the message is less specific than it could be.
-
 ## Development
 
 ```bash
@@ -189,3 +223,5 @@ apart. That assertion stays as a sentinel against future drift.
 ## License
 
 MIT. KiroCrew itself is Apache-2.0 and is neither included nor modified here.
+Kiro and Kiro Crew are trademarks of their respective owner; this project is not
+affiliated with or endorsed by them.
