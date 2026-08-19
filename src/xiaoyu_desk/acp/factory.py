@@ -15,7 +15,6 @@ Modeled on xiaoyu's own ACP factory, with two departures:
 from __future__ import annotations
 
 import threading
-import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -40,7 +39,6 @@ from .agentspec import AgentSpec
 #: Generous because a cold schema cache means real subprocess startup, and the
 #: cost of giving up early is a doubled first answer (see McpProvider.view).
 READY_TIMEOUT_SECS = 30.0
-_READY_POLL_SECS = 0.2
 
 
 class McpProvider:
@@ -86,19 +84,13 @@ class McpProvider:
             if self._manager is None:
                 manager = McpManager(self._spec.servers)
                 manager.start()
-                self._await_ready(manager)
+                # Bounded, not indefinite: a server that never becomes ready
+                # must cost a doubled first answer, not a session that never
+                # starts. wait_ready returns as soon as every server has a
+                # verdict, ready or failed.
+                manager.wait_ready(self._ready_timeout)
                 self._manager = manager
             return McpView(self._manager, "all")
-
-    def _await_ready(self, manager: McpManager) -> None:
-        """Wait out the initial server load, bounded.
-
-        Bounded rather than indefinite: a server that never becomes ready must
-        cost a doubled first answer, not a session that never starts.
-        """
-        deadline = time.monotonic() + self._ready_timeout
-        while manager.loading() and time.monotonic() < deadline:
-            time.sleep(_READY_POLL_SECS)
 
     def close(self) -> None:
         with self._lock:
@@ -120,6 +112,11 @@ def _assert_view_honored(toolbox: Toolbox, view: McpView) -> None:
     A version check would not catch it (the fix shipped without a version bump,
     so one version string names two different behaviors), so this asserts the
     behavior itself through the public accessor.
+
+    As of the pinned 0.33.0 that precedence is stated in xiaoyu's own source and
+    covered by an upstream contract test, so this is a regression net rather than
+    a guard against a live hazard. It stays because the pin is the only thing
+    keeping it that way, and a pin is one edit away from moving.
     """
     if toolbox.mcp_manager is not view:
         raise RuntimeError(
