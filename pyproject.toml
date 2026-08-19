@@ -4,11 +4,27 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xiaoyu-desk"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Xiaoyu Desk — a KiroCrew distribution driven by the xiaoyu agent"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
+authors = [{ name = "Fenghuang", email = "pholex@gmail.com" }]
+keywords = ["kirocrew", "acp", "agent-client-protocol", "xiaoyu", "llm", "coding-agent"]
+classifiers = [
+    # Beta on purpose: the adapter is used daily but several KiroCrew features
+    # do not work through it yet, and one of them fails silently (see README).
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Code Generators",
+]
 # Pinned exactly, not ranged: the adapter reaches past xiaoyu's CLI into its
 # library surface (AcpServer, Toolbox, McpManager), which a release is free to
 # reshape. Upgrading is a deliberate edit plus a test run.
@@ -25,9 +41,17 @@ dependencies = [
     "xiaoyu-agent==0.33.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/pholex/xiaoyu-desk"
+Repository = "https://github.com/pholex/xiaoyu-desk"
+Issues = "https://github.com/pholex/xiaoyu-desk/issues"
+
 [project.scripts]
 # What KIROCREW_KIRO_BIN points at.
 xiaoyu-desk-acp = "xiaoyu_desk.acp.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "xiaoyu_desk.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -33,7 +33,7 @@ normally, forever, with nothing to re-merge.
 
 ```bash
 # 1. the adapter
-pip install git+https://github.com/pholex/xiaoyu-desk
+pip install xiaoyu-desk
 
 # 2. point xiaoyu at your model (interactive wizard, writes a user-level .env)
 xiaoyu config
