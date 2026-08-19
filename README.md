@@ -66,14 +66,8 @@ a script. **If you report a problem, please include its output.**
 
 ## Known limitations
 
-**Read this before relying on it.** The first two are the ones people hit.
+**Read this before relying on it.** The first one is what people hit.
 
-- **Mid-turn steer does nothing, and does not say so.** KiroCrew believes this
-  backend implements steer. xiaoyu does have `Agent.steer()`, but its ACP server
-  neither handles the method nor exposes the live session, so this proxy has
-  nothing to route the request to and answers "not implemented" instead.
-  Pressing steer produces no error and no effect. Use Stop and send a new message
-  instead. This one is a missing access point upstream, not a missing capability.
 - **Only the agent the gateway started with is available.** Per-session agent
   switching is refused, so alternate agents (`kirocrew-lite`, `-research`,
   `-heartbeat`, `-knowledge`) cannot be selected from the session picker. The
@@ -94,6 +88,12 @@ a script. **If you report a problem, please include its output.**
 Verified working: streaming chat, tool approval (allow and reject), Stop,
 background subagents with parent/subagent concurrency, MCP tools, the model
 picker and switching, and conversation continuity across an agent restart.
+
+Mid-turn steer is wired and verified on the wire — the envelope is unwrapped, the
+text reaches `Agent.steer`, the `steering_consumed` echo goes back, and an
+unroutable steer is refused rather than acknowledged. What is **not** yet
+exercised is a steer landing in a genuinely in-flight turn against a live model;
+that needs driving the KiroCrew UI mid-answer.
 
 Not yet exercised: cron jobs, Slack/Discord channels, long-conversation
 compaction, artifacts, knowledge, task runner, apps. Tested on macOS only.
@@ -157,7 +157,8 @@ A line-level proxy around stdin/stdout:
 | KiroCrew sends | xiaoyu sees |
 |---|---|
 | `session/set_model` | `session/set_config_option` (configId `model`); the reply is rewritten back to `{}` |
-| `_kiro.dev/*`, `_session/steer` | nothing — answered `-32601` by the proxy |
+| `_kiro.dev/*` | nothing — answered `-32601` by the proxy |
+| `_session/steer` | `Agent.steer` on the named session, plus a `steering_consumed` echo |
 | `session/set_mode` | nothing — answered by the proxy, see below |
 
 | xiaoyu replies | KiroCrew sees |
@@ -183,6 +184,12 @@ session on the spawned agent while KiroCrew believed it had moved to another —
 silently widening what the model may do whenever the requested agent is narrower.
 
 ### 2. The session factory (`factory.py`, `agentspec.py`)
+
+The session assembly itself is xiaoyu's — `build_agent_factory`, the same chain
+its CLI runs, exported for embedding hosts. This adapter used to carry a
+line-by-line fork of it, and the fork drifted: it silently lacked
+`install_exit_logging`, so exit reasons never reached the session log. What is
+left in `factory.py` is only what is genuinely this adapter's.
 
 KiroCrew writes its agent definitions to `<kiro home>/agents/<name>.json` and
 names one with `--agent` at spawn. That file — not the ACP wire — is where a

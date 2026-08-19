@@ -37,6 +37,13 @@ classifiers = [
 # rather than trusting this pin, because the fix once existed unreleased under an
 # already-published version number, and no version specifier could tell the two
 # apart. That assertion stays as a sentinel against any future drift.
+# NOTE (branch kernel-0.34-surface): the code on this branch requires xiaoyu's
+# embedding surface — `acp.build_agent_factory` and `AcpServer.agent_for` —
+# which is merged upstream but NOT released. The pin deliberately stays at the
+# last real release: PyPI rejects direct-URL (git) dependencies, so a commit pin
+# could never ship, and naming an unreleased version would be a lie. `cli.serve`
+# checks for the surface by behavior and says "upgrade xiaoyu-agent" rather than
+# crashing. Bump this to ==0.34.0 and drop this note before merging.
 dependencies = [
     "xiaoyu-agent==0.33.0",
 ]

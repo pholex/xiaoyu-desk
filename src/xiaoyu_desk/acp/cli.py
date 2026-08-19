@@ -113,7 +113,28 @@ def serve(agent: str, model: str, directory: str) -> int:
 
     # Deferred: importing AcpServer pulls in xiaoyu's provider stack, which the
     # --version and whoami probes have no use for and should not pay for.
+    from xiaoyu import acp as xiaoyu_acp
     from xiaoyu.acp import AcpServer
+
+    # Checked by behavior, not by version: the surface this adapter needs landed
+    # without a version bump, so a version string names both builds. Missing it
+    # would otherwise surface as an AttributeError from inside a session build,
+    # which reads as a crash rather than as "upgrade xiaoyu-agent".
+    missing = [
+        name
+        for name, present in (
+            ("build_agent_factory", hasattr(xiaoyu_acp, "build_agent_factory")),
+            ("AcpServer.agent_for", hasattr(AcpServer, "agent_for")),
+        )
+        if not present
+    ]
+    if missing:
+        print(
+            f"xiaoyu-desk-acp: the installed xiaoyu-agent lacks {', '.join(missing)}. "
+            "Upgrade xiaoyu-agent to a build that exports the embedding surface.",
+            file=sys.stderr,
+        )
+        return 1
 
     mcp = McpProvider(spec)
     dialect = KiroDialect(agent, sys.stdout)
@@ -122,6 +143,9 @@ def serve(agent: str, model: str, directory: str) -> int:
         stdin=DialectStdin(dialect, sys.stdin),
         stdout=DialectStdout(dialect),
     )
+    # Only now can the steer route reach the sessions: the server was built with
+    # this dialect's own streams, so it could not have been passed in.
+    dialect.bind(server)
     try:
         return server.serve() or 0
     finally:

@@ -18,7 +18,8 @@ KiroCrew sends                what xiaoyu sees
 ``session/set_model``         ``session/set_config_option`` (configId ``model``),
                               and the reply is rewritten back to ``{}``
 ``_kiro.dev/*``               nothing — answered ``-32601`` here
-``_session/steer``            nothing — answered ``-32601`` here
+``_session/steer``            ``Agent.steer`` on the named session, plus a
+                              ``steering_consumed`` echo
 ``session/set_mode``          nothing — answered here; see ``_on_set_mode``
 ============================  ==================================================
 
@@ -52,7 +53,12 @@ MODEL_CONFIG_ID = "model"
 #: here is a kiro-cli extension with no standards-track equivalent; KiroCrew
 #: sends them fire-and-forget and treats a rejection as "backend lacks it".
 _SHORT_CIRCUIT_PREFIXES = ("_kiro.dev/",)
-_SHORT_CIRCUIT_METHODS = frozenset({"_session/steer"})
+_SHORT_CIRCUIT_METHODS: frozenset[str] = frozenset()
+
+#: KiroCrew wraps a steer's text in this element before sending it. Unwrapped
+#: here, or the model reads the literal tags as part of the instruction.
+_STEER_OPEN = "<user_message>"
+_STEER_CLOSE = "</user_message>"
 
 #: Responses to these methods carry the session descriptor KiroCrew reads its
 #: model list and agent selector out of.
@@ -108,6 +114,22 @@ def models_from_config_options(options: object, fallback_current: str = "") -> d
     return None
 
 
+def _unwrap_steer(raw: object) -> str:
+    """Return the steer's actual text, unwrapping KiroCrew's envelope.
+
+    KiroCrew sends ``<user_message>\n{text}\n</user_message>``. Fed through
+    verbatim the model reads the tags as part of the instruction. The wrapper is
+    stripped when present and the value taken as-is when not, so a hand-rolled
+    client or a changed envelope still steers rather than failing.
+    """
+    if not isinstance(raw, str):
+        return ""
+    text = raw.strip()
+    if text.startswith(_STEER_OPEN) and text.endswith(_STEER_CLOSE):
+        text = text[len(_STEER_OPEN) : -len(_STEER_CLOSE)]
+    return text.strip()
+
+
 class KiroDialect:
     """Shared translation state for one stdio connection.
 
@@ -121,6 +143,9 @@ class KiroDialect:
     def __init__(self, agent: str, out: TextIO) -> None:
         self._agent = agent
         self._out = out
+        #: Late-bound: the server is constructed WITH this object's streams, so
+        #: it cannot be passed in. Only the steer route needs it.
+        self._server: Any = None
         self._lock = threading.Lock()
         #: Ids of in-flight session/new | session/load requests, whose responses
         #: need the models block and the modes rewrite.
@@ -128,6 +153,15 @@ class KiroDialect:
         #: Ids of set_model requests rewritten to set_config_option, whose
         #: responses must be rewritten back to the shape kiro expects.
         self._set_model_ids: set[object] = set()
+
+    def bind(self, server: Any) -> None:
+        """Hand over the ``AcpServer`` once it exists.
+
+        Chicken-and-egg: the server is constructed with this object's stdin and
+        stdout, so it cannot be a constructor argument. Everything except the
+        steer route works without it.
+        """
+        self._server = server
 
     # ---------- outbound ----------
 
@@ -167,6 +201,9 @@ class KiroDialect:
         if method in _SHORT_CIRCUIT_METHODS or method.startswith(_SHORT_CIRCUIT_PREFIXES):
             self._reject(req_id, f"{method} is not implemented by this backend")
             return None
+
+        if method == "_session/steer":
+            return self._on_steer(req_id, message)
 
         if method == "session/set_mode":
             return self._on_set_mode(req_id, message)
@@ -216,6 +253,55 @@ class KiroDialect:
             f"(start a session against that agent instead)",
         )
         return None
+
+    def _on_steer(self, req_id: object, message: dict[str, Any]) -> None:
+        """Route a mid-turn steer onto ``Agent.steer``.
+
+        ACP has no steer method; this is a kiro extension, so the translation
+        lives here and xiaoyu exposes only the capability (``agent_for`` hands
+        over the live ``Agent``; the queueing is thread-safe and lands at the
+        running turn's next step boundary).
+
+        The agent is fetched fresh every time, never cached: a ``session/load``
+        replaces the session's ``Agent``, and a cached one would steer a
+        conversation nobody is watching.
+
+        Failure is reported, not swallowed. Answering "ok" to a steer that went
+        nowhere is precisely the silent no-op this route exists to remove, and
+        it is worse than the old rejection — before, at least nothing claimed to
+        have worked.
+        """
+        params = message.get("params")
+        params = params if isinstance(params, dict) else {}
+        session_id = params.get("sessionId")
+        text = _unwrap_steer(params.get("message"))
+
+        if not text:
+            self._reject(req_id, "steer carried no text")
+            return
+        if self._server is None or not isinstance(session_id, str) or not session_id:
+            self._reject(req_id, "steer could not be routed: no session to steer")
+            return
+        agent = self._server.agent_for(session_id)
+        if agent is None:
+            self._reject(req_id, f"steer names no live session: {session_id!r}")
+            return
+
+        agent.steer(text)
+        if _hashable_id(req_id) is not None:
+            # kiro answers {queued: true} and does not await this at all — the
+            # notification below is what its UI actually settles on.
+            self.emit({"jsonrpc": "2.0", "id": req_id, "result": {"queued": True}})
+        self.emit(
+            {
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {
+                    "sessionId": session_id,
+                    "update": {"sessionUpdate": "steering_consumed", "content": text},
+                },
+            }
+        )
 
     def _on_set_model(self, req_id: object, message: dict[str, Any]) -> str:
         """Rewrite the removed ``session/set_model`` draft call onto the standard."""

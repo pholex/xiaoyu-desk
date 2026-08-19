@@ -151,7 +151,7 @@ class TestModeTranslation(unittest.TestCase):
 
 class TestShortCircuit(unittest.TestCase):
     def test_kiro_extensions_are_answered_here_and_not_forwarded(self):
-        for method in ("_kiro.dev/session/terminate", "_kiro.dev/metadata", "_session/steer"):
+        for method in ("_kiro.dev/session/terminate", "_kiro.dev/metadata"):
             with self.subTest(method=method):
                 h = _Harness()
                 self.assertIsNone(
@@ -171,6 +171,116 @@ class TestShortCircuit(unittest.TestCase):
                    "params": {"sessionId": "s", "prompt": [{"type": "text", "text": "hi"}]}}
         self.assertEqual(h.inbound(message), message)
         self.assertEqual(h.frames(), [])
+
+
+class _FakeAgent:
+    def __init__(self):
+        self.steered: list[str] = []
+
+    def steer(self, text: str) -> None:
+        self.steered.append(text)
+
+
+class _FakeServer:
+    """Stands in for AcpServer's embedding surface."""
+
+    def __init__(self, sessions: dict):
+        self.sessions = sessions
+        self.lookups: list[str] = []
+
+    def agent_for(self, session_id: str):
+        self.lookups.append(session_id)
+        return self.sessions.get(session_id)
+
+
+def _steer(session_id="s1", message="<user_message>\nuse pytest\n</user_message>", req_id=5):
+    frame = {"jsonrpc": "2.0", "method": "_session/steer",
+             "params": {"sessionId": session_id, "message": message}}
+    if req_id is not None:
+        frame["id"] = req_id
+    return frame
+
+
+class TestSteer(unittest.TestCase):
+    """Mid-turn steer: the one KiroCrew feature that used to silently do nothing.
+
+    ACP has no steer method, so this is a kiro extension translated onto
+    Agent.steer. The rule throughout is that a steer either lands or is refused
+    — never acknowledged into the void, which is what the old -32601 amounted to
+    from the user's side (KiroCrew treats the rejection as fire-and-forget and
+    shows nothing).
+    """
+
+    def _bound(self, sessions=None):
+        agent = _FakeAgent()
+        server = _FakeServer(sessions if sessions is not None else {"s1": agent})
+        h = _Harness()
+        h.dialect.bind(server)
+        return h, server, agent
+
+    def test_the_envelope_is_stripped_before_the_model_sees_it(self):
+        # KiroCrew wraps the text in <user_message>…</user_message>. Passed
+        # through verbatim the model reads the tags as part of the instruction.
+        h, _server, agent = self._bound()
+        self.assertIsNone(h.inbound(_steer()))
+        self.assertEqual(agent.steered, ["use pytest"])
+
+    def test_text_without_the_envelope_still_steers(self):
+        # A hand-rolled client, or a changed envelope, must not stop a steer.
+        h, _server, agent = self._bound()
+        h.inbound(_steer(message="just do it"))
+        self.assertEqual(agent.steered, ["just do it"])
+
+    def test_a_consumed_echo_is_emitted_so_the_ui_can_settle(self):
+        # Without this KiroCrew's steer card stays pending forever: the reply is
+        # not what it settles on, the notification is.
+        h, _server, _agent = self._bound()
+        h.inbound(_steer())
+        updates = [f for f in h.frames() if f.get("method") == "session/update"]
+        self.assertEqual(len(updates), 1)
+        update = updates[0]["params"]["update"]
+        self.assertEqual(update["sessionUpdate"], "steering_consumed")
+        self.assertEqual(update["content"], "use pytest")
+        self.assertEqual(updates[0]["params"]["sessionId"], "s1")
+
+    def test_the_request_is_answered_queued(self):
+        h, _server, _agent = self._bound()
+        h.inbound(_steer())
+        replies = [f for f in h.frames() if f.get("id") == 5]
+        self.assertEqual(replies[0]["result"], {"queued": True})
+
+    def test_an_unknown_session_is_refused_and_steers_nothing(self):
+        h, _server, agent = self._bound(sessions={})
+        h.inbound(_steer(session_id="ghost"))
+        self.assertEqual(agent.steered, [])
+        self.assertEqual(h.frames()[0]["error"]["code"], METHOD_NOT_FOUND)
+        self.assertNotIn("session/update", [f.get("method") for f in h.frames()])
+
+    def test_an_empty_steer_is_refused_rather_than_queued(self):
+        h, _server, agent = self._bound()
+        h.inbound(_steer(message="<user_message>\n\n</user_message>"))
+        self.assertEqual(agent.steered, [])
+        self.assertEqual(h.frames()[0]["error"]["code"], METHOD_NOT_FOUND)
+
+    def test_an_unbound_dialect_refuses_instead_of_pretending(self):
+        # Before bind() there is no way to reach a session. Answering ok here
+        # would be the exact silent no-op this route replaced.
+        h = _Harness()
+        self.assertIsNone(h.inbound(_steer()))
+        self.assertEqual(h.frames()[0]["error"]["code"], METHOD_NOT_FOUND)
+
+    def test_the_agent_is_looked_up_fresh_every_time(self):
+        # session/load replaces a session's Agent; a cached one would steer a
+        # conversation nobody is watching.
+        h, server, _agent = self._bound()
+        h.inbound(_steer(req_id=1))
+        h.inbound(_steer(req_id=2))
+        self.assertEqual(server.lookups, ["s1", "s1"])
+
+    def test_steer_never_reaches_xiaoyu_on_the_wire(self):
+        # xiaoyu would answer "method not found"; the translation is the point.
+        h, _server, _agent = self._bound()
+        self.assertIsNone(h.inbound(_steer()))
 
 
 class TestWireRobustness(unittest.TestCase):
