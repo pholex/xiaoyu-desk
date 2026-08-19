@@ -93,11 +93,11 @@ Verified working: streaming chat, tool approval (allow and reject), Stop,
 background subagents with parent/subagent concurrency, MCP tools, the model
 picker and switching, and conversation continuity across an agent restart.
 
-Mid-turn steer is wired and verified on the wire — the envelope is unwrapped, the
-text reaches `Agent.steer`, the `steering_consumed` echo goes back, and an
-unroutable steer is refused rather than acknowledged. What is **not** yet
-exercised is a steer landing in a genuinely in-flight turn against a live model;
-that needs driving the KiroCrew UI mid-answer.
+Mid-turn steer is verified against a live turn, not just on the wire. Steering a
+running task with "今天星期几" produced KiroCrew's "steered into the running turn"
+badge (it renders only on the `steering_consumed` echo), the model answered at the
+next step boundary rather than mid-sentence, and it then resumed the long task in
+the same turn — no interruption, no second turn.
 
 Not yet exercised: cron jobs, Slack/Discord channels, long-conversation
 compaction, artifacts, knowledge, task runner, apps. Tested on macOS only.
