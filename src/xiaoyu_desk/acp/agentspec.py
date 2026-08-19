@@ -85,6 +85,11 @@ class AgentSpec:
     name: str
     prompt: str = ""
     servers: list[ServerSpec] = field(default_factory=list)
+    #: ``mcpServers`` entries this adapter could not translate, as
+    #: ``(name, reason)``. Carried rather than discarded so ``doctor`` can name
+    #: them: a dropped entry is a tool the model silently does not have, and the
+    #: roster alone gives no hint that anything went missing.
+    skipped: list[tuple[str, str]] = field(default_factory=list)
 
 
 def agents_dir(explicit: str | None = None) -> Path:
@@ -101,23 +106,33 @@ def agents_dir(explicit: str | None = None) -> Path:
     return Path(home).expanduser() / "agents"
 
 
-def _servers_from(raw: object) -> list[ServerSpec]:
+def _servers_from(raw: object) -> tuple[list[ServerSpec], list[tuple[str, str]]]:
     """Translate a kiro ``mcpServers`` map into xiaoyu ``ServerSpec`` records.
 
     Shape-tolerant on purpose: the file is written by another program, so an
     entry that is not a usable stdio server declaration is skipped rather than
     raising. A malformed entry must not cost the session every other server.
+
+    Returns the translated servers AND what was skipped, with a reason for each.
+    Skipping silently was itself one of the silent failures this project exists
+    to remove: the session comes up with a shorter roster, the model finds a tool
+    missing, and nothing anywhere says which entry was dropped or why.
     """
     if not isinstance(raw, dict):
-        return []
+        return [], []
     specs: list[ServerSpec] = []
+    skipped: list[tuple[str, str]] = []
     for name, entry in raw.items():
         if not isinstance(name, str) or not isinstance(entry, dict):
+            skipped.append((str(name), "not a named JSON object"))
             continue
         command = entry.get("command")
         if not isinstance(command, str) or not command:
             # No command means a transport this adapter does not speak (an HTTP
             # or SSE server). Skipping keeps the stdio ones working.
+            skipped.append(
+                (name, "no command — xiaoyu's ServerSpec speaks stdio only, not HTTP/SSE")
+            )
             continue
         args = [str(a) for a in entry.get("args", []) if isinstance(a, (str, int, float))]
         env_raw = entry.get("env")
@@ -136,7 +151,7 @@ def _servers_from(raw: object) -> list[ServerSpec]:
                 disabled=bool(entry.get("disabled", False)),
             )
         )
-    return specs
+    return specs, skipped
 
 
 def _resolve_prompt(raw: object) -> str:
@@ -189,8 +204,10 @@ def load(agent: str, directory: Path | None = None) -> AgentSpec:
         raise AgentSpecError(f"agent spec unreadable ({path}): {exc}") from exc
     if not isinstance(data, dict):
         raise AgentSpecError(f"agent spec is not a JSON object: {path}")
+    servers, skipped = _servers_from(data.get("mcpServers"))
     return AgentSpec(
         name=agent,
         prompt=_resolve_prompt(data.get("prompt")),
-        servers=_servers_from(data.get("mcpServers")),
+        servers=servers,
+        skipped=skipped,
     )

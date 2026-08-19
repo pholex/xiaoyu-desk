@@ -11,6 +11,8 @@ from pathlib import Path
 from unittest import mock
 
 from xiaoyu_desk.acp import doctor
+from xiaoyu.mcp import ServerSpec
+
 from xiaoyu_desk.acp.agentspec import AgentSpec
 
 
@@ -52,6 +54,29 @@ class TestAgentSpec(unittest.TestCase):
             result, spec = doctor._agent_spec("kirocrew", str(directory))
         self.assertEqual(result.status, doctor.OK)
         self.assertEqual(spec.prompt, "hi")
+
+
+class TestMcpServers(unittest.TestCase):
+    def test_a_skipped_entry_is_named_even_when_others_translated(self):
+        # The silent failure: an HTTP server in the agent spec is dropped at
+        # parse time, the roster just comes out shorter, and the first sign is a
+        # model saying a tool does not exist. A shorter roster must not read as OK.
+        spec = AgentSpec(
+            name="a",
+            servers=[ServerSpec(name="local", command="x")],
+            skipped=[("remote", "no command — stdio only")],
+        )
+        r = doctor._mcp_servers(spec)
+        self.assertEqual(r.status, doctor.WARN)
+        self.assertIn("remote", r.detail)
+        self.assertIn("local", r.detail)
+
+    def test_a_clean_roster_passes(self):
+        spec = AgentSpec(name="a", servers=[ServerSpec(name="local", command="x")])
+        self.assertEqual(doctor._mcp_servers(spec).status, doctor.OK)
+
+    def test_no_servers_at_all_warns(self):
+        self.assertEqual(doctor._mcp_servers(AgentSpec(name="a")).status, doctor.WARN)
 
 
 class TestMcpInjection(unittest.TestCase):

@@ -97,6 +97,25 @@ class TestLoad(unittest.TestCase):
             })
             spec = load("a", directory)
         self.assertEqual([s.name for s in spec.servers], ["local"])
+        # …and the skip is recorded rather than dropped on the floor: a server
+        # that vanishes without a word is a tool the model silently lacks.
+        self.assertEqual([name for name, _reason in spec.skipped], ["remote"])
+        self.assertIn("stdio", spec.skipped[0][1])
+
+    def test_a_malformed_entry_is_recorded_too(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            _write(directory, "a", {"mcpServers": {"bad": ["not", "an", "object"]}})
+            spec = load("a", directory)
+        self.assertEqual(spec.servers, [])
+        self.assertEqual([name for name, _reason in spec.skipped], ["bad"])
+
+    def test_a_fully_usable_spec_skips_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            _write(directory, "a", {"mcpServers": {"s": {"command": "x"}}})
+            spec = load("a", directory)
+        self.assertEqual(spec.skipped, [])
 
     def test_kirocrew_env_is_forwarded_to_servers(self):
         # xiaoyu builds a stdio server's env from a whitelist rather than
