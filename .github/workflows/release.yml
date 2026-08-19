@@ -1,0 +1,56 @@
+# Release: push a v* tag, CI runs, and only a green run publishes to PyPI.
+#
+# Auth is PyPI Trusted Publishing (OIDC) — there is no API token anywhere, not
+# in a secret and not on a laptop. One-time setup on PyPI:
+#
+#   https://pypi.org/manage/project/xiaoyu-desk/settings/publishing/
+#     Owner: pholex   Repository: xiaoyu-desk
+#     Workflow: release.yml   Environment: pypi
+#
+# Before the project's first upload it does not exist on PyPI yet, so add it as
+# a PENDING publisher instead, at:
+#
+#   https://pypi.org/manage/account/publishing/
+#
+# After that, `git tag v0.0.1 && git push origin v0.0.1` is the whole release.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  # Publishing is gated on CI. A tag must never be able to ship a red build:
+  # the failure mode is silent, because by the time anyone looks at the badge
+  # the artifact is already on PyPI and its version number is burned forever.
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # required for Trusted Publishing
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: tag must match __version__
+        # Read the file rather than importing: this is a src layout, so an
+        # import would need the package installed, which would drag in the
+        # whole dependency just to read one string.
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(python -c "import re,pathlib;print(re.search(r'__version__ = \"([^\"]+)\"',pathlib.Path('src/xiaoyu_desk/__init__.py').read_text()).group(1))")
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag v$tag does not match __version__ $version"
+            exit 1
+          fi
+      # Both sdist and wheel. The sdist carries only the package plus tests, so
+      # there is no junk to keep out of it, and shipping one is what lets people
+      # audit or repackage from source.
+      - run: pip install build && python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1

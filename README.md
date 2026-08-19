@@ -220,6 +220,20 @@ trusting the pin, because the fix once existed unreleased under an
 already-published version number and no version specifier could tell the two
 apart. That assertion stays as a sentinel against future drift.
 
+## Releasing
+
+Publishing runs on GitHub Actions with PyPI Trusted Publishing — no API token
+exists anywhere, on a laptop or in a secret.
+
+1. Bump `__version__` in `src/xiaoyu_desk/__init__.py` (the only place it lives;
+   `pyproject.toml` reads it dynamically).
+2. Commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
+
+The tag runs CI first and publishes only if it is green, after checking that the
+tag matches `__version__`. A tag can never ship a red build: by the time anyone
+noticed, the artifact would already be on PyPI with its version number burned
+permanently.
+
 ## License
 
 MIT. KiroCrew itself is Apache-2.0 and is neither included nor modified here.

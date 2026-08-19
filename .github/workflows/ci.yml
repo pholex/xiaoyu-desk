@@ -1,0 +1,46 @@
+# CI: unit tests on every push/PR.
+#
+# The suite is hermetic — no network, no model calls, no KiroCrew install. What
+# it cannot cover is the part that needs a live gateway and a human to answer an
+# approval prompt; that is verified by hand and the README says which surfaces
+# have and have not been exercised.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  # release.yml calls this as a job and gates publishing on it. Cross-workflow
+  # `needs` does not exist, so workflow_call is the only way.
+  # ⚠️ Do NOT add tags: ["v*"] to push here — a tag would then run the whole
+  # matrix twice (directly, and again via release).
+  workflow_call:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # Matches the classifiers. Windows is deliberately absent: the tests
+        # would very likely pass there, but the product has never been run
+        # against a real gateway on Windows, and a green badge would claim more
+        # than anyone has checked.
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.11", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      # Installing the package (not just the test deps) also proves the pinned
+      # xiaoyu-agent still resolves — the dependency this adapter reaches into.
+      - name: install
+        run: pip install -e .
+      - name: unit tests
+        # -v and unbuffered so a failure is readable in the log rather than a
+        # bare count; the timeout keeps a hung test from burning the job's hour.
+        run: python -u -m unittest discover -s tests -v
+        timeout-minutes: 5
