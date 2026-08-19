@@ -69,14 +69,22 @@ a script. **If you report a problem, please include its output.**
 **Read this before relying on it.** The first two are the ones people hit.
 
 - **Mid-turn steer does nothing, and does not say so.** KiroCrew believes this
-  backend implements steer; xiaoyu has no equivalent, so the request is answered
-  "not implemented" and dropped. Pressing steer produces no error and no effect.
-  Use Stop and send a new message instead.
+  backend implements steer. xiaoyu does have `Agent.steer()`, but its ACP server
+  neither handles the method nor exposes the live session, so this proxy has
+  nothing to route the request to and answers "not implemented" instead.
+  Pressing steer produces no error and no effect. Use Stop and send a new message
+  instead. This one is a missing access point upstream, not a missing capability.
 - **Only the agent the gateway started with is available.** Per-session agent
   switching is refused, so alternate agents (`kirocrew-lite`, `-research`,
   `-heartbeat`, `-knowledge`) cannot be selected from the session picker. The
   refusal is explicit — the session fails with a message rather than silently
   running the wrong agent.
+- **xiaoyu's own interaction modes are unreachable.** KiroCrew reads the ACP
+  `modes` list as an agent selector, so the adapter has to overwrite it with the
+  single spawned agent — which leaves xiaoyu's `plan` and `auto` modes with
+  nowhere to be advertised. Every KiroCrew session therefore runs in xiaoyu's
+  `default` mode, confirming writes and commands one by one. Tool approval itself
+  works normally; it is only the mode *switch* that has no channel.
 - **Compaction status, agent-switched notices, and the TODO panel stay empty.**
   Those are `kiro-cli`-specific notifications that xiaoyu never emits. Nothing
   breaks; the panels just have nothing to show.
@@ -164,8 +172,13 @@ agent than requested. xiaoyu advertising its own interaction modes trips that
 guard on every session.
 
 The proxy advertises exactly one mode: the agent this process was spawned with.
-A `session/set_mode` naming that agent is acknowledged; naming any other one is
-**refused, not faked**. Acknowledging a switch that did not happen would leave the
+That has a real cost — xiaoyu's own `plan` and `auto` modes lose the only field
+they could have been advertised in, so no KiroCrew session can switch modes.
+Publishing them as a Session Config Option (the way `model` already is) would
+give them a channel kiro has not claimed; that is a xiaoyu-side change.
+
+A `session/set_mode` naming the spawned agent is acknowledged; naming any other
+one is **refused, not faked**. Acknowledging a switch that did not happen would leave the
 session on the spawned agent while KiroCrew believed it had moved to another —
 silently widening what the model may do whenever the requested agent is narrower.
 
