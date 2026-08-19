@@ -35,6 +35,8 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 from xiaoyu.mcp import ServerSpec
 
@@ -42,6 +44,9 @@ from xiaoyu.mcp import ServerSpec
 #: KiroCrew honors it when resolving the agents directory, so the adapter must
 #: resolve it the same way or it reads a directory KiroCrew never wrote to.
 DEFAULT_KIRO_HOME = "~/.kiro"
+
+#: Cap on a prompt file. Generous for prose; refuses a pathological file.
+_MAX_PROMPT_BYTES = 1024 * 1024
 
 #: Environment the agent spec's MCP servers must inherit from this process.
 #:
@@ -134,6 +139,38 @@ def _servers_from(raw: object) -> list[ServerSpec]:
     return specs
 
 
+def _resolve_prompt(raw: object) -> str:
+    """Return the system prompt named by an agent spec's ``prompt`` field.
+
+    KiroCrew writes a ``file://`` URL there rather than the prose — its shipped
+    agents point at ``kiro_crew/config/prompt.md``. Taken literally the model
+    receives a URL as its entire system prompt, which is not an error anywhere:
+    the session starts, the model just never sees its instructions.
+
+    An inline string is still honored, since a hand-written spec may carry one.
+    Unreadable file, or one larger than the cap, degrades to no prompt rather
+    than raising — a session with xiaoyu's own system prompt is far better than
+    no session, and far better than one whose prompt is the string "file://…".
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return ""
+    text = raw.strip()
+    if text.startswith("file://"):
+        path = Path(url2pathname(urlparse(text).path))
+    elif text.startswith("/") and text.endswith(".md"):
+        # A bare path is not a documented shape, but it is the obvious next
+        # spelling and costs one branch to honor.
+        path = Path(text)
+    else:
+        return text
+    try:
+        if path.stat().st_size > _MAX_PROMPT_BYTES:
+            return ""
+        return path.read_text(encoding="utf-8").strip()
+    except (OSError, ValueError, UnicodeDecodeError):
+        return ""
+
+
 def load(agent: str, directory: Path | None = None) -> AgentSpec:
     """Load the spec named *agent* from *directory*.
 
@@ -152,9 +189,8 @@ def load(agent: str, directory: Path | None = None) -> AgentSpec:
         raise AgentSpecError(f"agent spec unreadable ({path}): {exc}") from exc
     if not isinstance(data, dict):
         raise AgentSpecError(f"agent spec is not a JSON object: {path}")
-    prompt = data.get("prompt")
     return AgentSpec(
         name=agent,
-        prompt=prompt if isinstance(prompt, str) else "",
+        prompt=_resolve_prompt(data.get("prompt")),
         servers=_servers_from(data.get("mcpServers")),
     )

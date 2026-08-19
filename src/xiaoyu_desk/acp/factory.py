@@ -15,6 +15,7 @@ Modeled on xiaoyu's own ACP factory, with two departures:
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -35,6 +36,12 @@ from xiaoyu.tools import Toolbox
 
 from .agentspec import AgentSpec
 
+#: How long to wait for the agent spec's MCP servers before starting a session.
+#: Generous because a cold schema cache means real subprocess startup, and the
+#: cost of giving up early is a doubled first answer (see McpProvider.view).
+READY_TIMEOUT_SECS = 30.0
+_READY_POLL_SECS = 0.2
+
 
 class McpProvider:
     """Process-wide owner of the MCP servers declared by the agent spec.
@@ -49,8 +56,9 @@ class McpProvider:
     ``close`` must run on the way out; see ``cli.serve``.
     """
 
-    def __init__(self, spec: AgentSpec) -> None:
+    def __init__(self, spec: AgentSpec, ready_timeout: float = READY_TIMEOUT_SECS) -> None:
         self._spec = spec
+        self._ready_timeout = ready_timeout
         self._lock = threading.Lock()
         self._manager: McpManager | None = None
 
@@ -62,14 +70,35 @@ class McpProvider:
         ``Toolbox`` would fall back to config discovery and silently hand the
         session the operator's personal ``mcp.json`` — servers the agent spec
         never granted it.
+
+        Blocks until the servers are ready, which is what makes the FIRST answer
+        of a session correct rather than doubled. xiaoyu announces a server
+        coming online through ``Agent.notify``, and a notification that lands
+        while the model is producing prose is re-delivered at the step boundary
+        and **forces another step** — so the model answers the same question
+        twice and the client concatenates both into one reply. Loading the
+        servers before the first prompt keeps that announcement out of a turn.
+        kiro-cli behaves the same way (its servers load during ``session/new``),
+        and KiroCrew already tolerates the wait: it tracks MCP init progress for
+        exactly this phase.
         """
         with self._lock:
             if self._manager is None:
-                self._manager = McpManager(self._spec.servers)
-                # Lazy by contract: with a warm schema cache this registers the
-                # servers without spawning anything until a tool is really called.
-                self._manager.start()
+                manager = McpManager(self._spec.servers)
+                manager.start()
+                self._await_ready(manager)
+                self._manager = manager
             return McpView(self._manager, "all")
+
+    def _await_ready(self, manager: McpManager) -> None:
+        """Wait out the initial server load, bounded.
+
+        Bounded rather than indefinite: a server that never becomes ready must
+        cost a doubled first answer, not a session that never starts.
+        """
+        deadline = time.monotonic() + self._ready_timeout
+        while manager.loading() and time.monotonic() < deadline:
+            time.sleep(_READY_POLL_SECS)
 
     def close(self) -> None:
         with self._lock:
@@ -100,6 +129,33 @@ def _assert_view_honored(toolbox: Toolbox, view: McpView) -> None:
             "xiaoyu-agent to a build where an explicit mcp_view takes precedence "
             "over config discovery."
         )
+
+
+def _settle_mcp_announcement(toolbox: Toolbox) -> None:
+    """Absorb the MCP roster once BEFORE the agent can be notified about it.
+
+    xiaoyu announces "MCP server X connected" through ``Agent.notify`` the first
+    time a toolbox assembles its schemas. That first assembly otherwise happens
+    inside the session's FIRST turn, and a notification that arrives while the
+    model is producing prose is re-delivered at the step boundary and **forces
+    another step** — so the model answers the same question a second time and
+    the client renders both, concatenated. It looks exactly like a duplicated
+    reply ("OK" becoming "OKOK") and only on a session's first answer.
+
+    The announcement is bookkept per (server, tool-set fingerprint), so it fires
+    once and then only on a real change. Assembling here with a hook that
+    discards the message records that bookkeeping, and the in-turn assembly then
+    finds nothing changed. A no-op hook rather than none: ``_announce_mcp``
+    returns early while ``notify_hook`` is None and skips the bookkeeping with
+    it, so leaving the hook unset settles nothing. ``Agent.__init__`` installs
+    the real hook afterwards, so only this first announcement is swallowed.
+
+    The model still reaches every MCP tool through ``search_tool`` — only the
+    unsolicited "server connected" nudge is dropped, and the agent spec's own
+    system prompt already describes the tooling.
+    """
+    toolbox.notify_hook = lambda *_args, **_kwargs: None
+    toolbox.schemas()
 
 
 def build_factory(
@@ -159,6 +215,7 @@ def build_factory(
         view = mcp.view()
         toolbox = Toolbox(config, mcp_view=view)
         _assert_view_honored(toolbox, view)
+        _settle_mcp_announcement(toolbox)
 
         agent = Agent(
             config,

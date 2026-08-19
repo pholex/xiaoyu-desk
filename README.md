@@ -80,7 +80,10 @@ with none of KiroCrew's capabilities.
 
 So the adapter reads it and injects:
 
-- `prompt` → appended to xiaoyu's system prompt.
+- `prompt` → **dereferenced, then** appended to xiaoyu's system prompt. KiroCrew
+  writes a `file://` URL here, not the prose; taken literally the model's entire
+  system prompt becomes a URL and nothing errors — the session looks healthy
+  while the agent's instructions never arrive.
 - `mcpServers` → `ServerSpec` records handed to an adapter-owned `McpManager`,
   which **replaces** xiaoyu's own config discovery rather than merging with it.
   The agent spec is the single source of truth for what the session may reach;
@@ -89,6 +92,13 @@ So the adapter reads it and injects:
   names that do not name xiaoyu tools, so any mapping would be a guess, and a
   wrong guess pre-approves what the operator never approved. Every tool call
   travels the ACP approval bridge to KiroCrew's own prompt instead.
+
+The MCP servers are loaded, and their "server connected" announcement settled,
+**before** the first prompt. xiaoyu delivers that announcement through
+`Agent.notify`, and a notification landing while the model is writing prose is
+re-delivered at the step boundary and forces another step — the model answers the
+same question twice and the client concatenates both replies. It shows up as a
+doubled first answer (`OK` rendering as `OKOK`) and nowhere else.
 
 `${VAR}` placeholders in server env are passed through unexpanded, so an
 unresolvable one fails in the server that needs it rather than quietly becoming

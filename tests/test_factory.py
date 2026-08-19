@@ -12,7 +12,11 @@ from xiaoyu.mcp import McpManager, McpView, ServerSpec
 from xiaoyu.tools import Toolbox
 
 from xiaoyu_desk.acp.agentspec import AgentSpec
-from xiaoyu_desk.acp.factory import McpProvider, _assert_view_honored
+from xiaoyu_desk.acp.factory import (
+    McpProvider,
+    _assert_view_honored,
+    _settle_mcp_announcement,
+)
 
 
 def _config() -> Config:
@@ -50,6 +54,41 @@ class TestViewIsHonored(unittest.TestCase):
         with self.assertRaises(RuntimeError) as caught:
             _assert_view_honored(_IgnoringToolbox(), view)
         self.assertIn("mcp_view", str(caught.exception))
+
+
+class TestMcpAnnouncementSettling(unittest.TestCase):
+    """The first schema assembly must not be able to notify the agent.
+
+    xiaoyu announces a connected MCP server through Agent.notify, and a
+    notification arriving while the model is writing prose forces an extra step
+    — the model answers twice and the client concatenates both ("OK" -> "OKOK").
+    Settling the announcement before the Agent exists is what prevents that.
+    """
+
+    def test_schemas_is_assembled_with_a_hook_installed(self):
+        # The subtlety that made a first attempt fail: _announce_mcp returns
+        # early when notify_hook is None and skips its own bookkeeping with it,
+        # so assembling with no hook settles nothing and the announcement fires
+        # again inside the turn.
+        seen: list[object] = []
+
+        class _Toolbox:
+            notify_hook = None
+
+            def schemas(_self):
+                seen.append(_self.notify_hook)
+                return []
+
+        box = _Toolbox()
+        _settle_mcp_announcement(box)
+        self.assertEqual(len(seen), 1)
+        self.assertIsNotNone(seen[0], "schemas() ran with notify_hook=None; nothing was settled")
+
+    def test_the_installed_hook_discards_the_message(self):
+        box = mock.Mock(**{"schemas.return_value": []})
+        _settle_mcp_announcement(box)
+        # Must accept the (text, key) shape xiaoyu calls it with, and swallow it.
+        self.assertIsNone(box.notify_hook("MCP server X connected", "mcp-online-X-abc"))
 
 
 class TestMcpProvider(unittest.TestCase):

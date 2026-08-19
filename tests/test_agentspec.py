@@ -128,6 +128,33 @@ class TestLoad(unittest.TestCase):
         self.assertIn("KIROCREW_HOME", forwarded)
         self.assertNotIn("AWS_SECRET_ACCESS_KEY", forwarded)
 
+    def test_file_url_prompt_is_dereferenced(self):
+        # KiroCrew writes a file:// URL here, not the prose. Taken literally the
+        # model's entire system prompt becomes a URL — and nothing errors, so the
+        # session looks healthy while the agent's instructions never arrive.
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            prompt_file = directory / "prompt.md"
+            prompt_file.write_text("You are the crew.\n", encoding="utf-8")
+            _write(directory, "a", {"prompt": prompt_file.as_uri()})
+            spec = load("a", directory)
+        self.assertEqual(spec.prompt, "You are the crew.")
+
+    def test_inline_prompt_is_still_honored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            _write(directory, "a", {"prompt": "inline instructions"})
+            spec = load("a", directory)
+        self.assertEqual(spec.prompt, "inline instructions")
+
+    def test_unreadable_prompt_file_degrades_to_no_prompt(self):
+        # Better xiaoyu's own system prompt than one that is the string "file://…".
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            _write(directory, "a", {"prompt": "file:///nonexistent/prompt.md"})
+            spec = load("a", directory)
+        self.assertEqual(spec.prompt, "")
+
     def test_missing_spec_raises_rather_than_starting_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(AgentSpecError):
