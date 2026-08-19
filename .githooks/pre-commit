@@ -1,0 +1,29 @@
+#!/bin/sh
+# commit 前内容检查：扫描本次暂存的**新增行**，命中本机维护的词表即拒绝提交。
+# 词表刻意放在仓库之外（~/.agents/sensitive-patterns/xiaoyu-desk-block.txt，
+# 一行一个 ERE pattern）——清单本身不随仓库分发。词表缺失时告警放行，不挡新环境。
+#
+# 与 zhinu 用**不同的**词表，这是有意的：desk 是公开的 KiroCrew 适配器，
+# "kiro" 是它 README 标题里的产品名，而在 zhinu 里同一个词意味着泄漏。
+# 共用一份表会让每次 commit 都被拦、每次都跳过，跳过一旦变成常规操作，
+# 其余规则的防护就一起归零了。
+#
+# 确认误报要跳过一次：XIAOYU_SKIP_SENSITIVE=1 git commit …
+# 启用：git config core.hooksPath .githooks
+[ "$XIAOYU_SKIP_SENSITIVE" = "1" ] && exit 0
+patterns="$HOME/.agents/sensitive-patterns/xiaoyu-desk-block.txt"
+if [ ! -f "$patterns" ]; then
+    echo "[pre-commit] 警告：词表 $patterns 不存在，本次跳过内容检查" >&2
+    exit 0
+fi
+added=$(git diff --cached --diff-filter=ACMR -U0 | grep '^+' | grep -v '^+++' || true)
+[ -z "$added" ] && exit 0
+hits=$(printf '%s\n' "$added" | grep -i -E -f "$patterns" || true)
+if [ -n "$hits" ]; then
+    echo "[pre-commit] 拒绝提交：以下新增行命中检查词表——" >&2
+    printf '%s\n' "$hits" | head -20 | sed 's/^/    /' >&2
+    echo "[pre-commit] 这类内容请写到不入库的位置（项目记忆，或仓外笔记）。" >&2
+    echo "[pre-commit] 确认误报：XIAOYU_SKIP_SENSITIVE=1 git commit … 跳过本次。" >&2
+    exit 1
+fi
+exit 0

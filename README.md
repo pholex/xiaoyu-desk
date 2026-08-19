@@ -235,7 +235,22 @@ tokens from this process's environment before it is spawned.
 ```bash
 python -m venv .venv && .venv/bin/pip install -e .
 .venv/bin/python -m unittest discover -s tests
+
+# opt in to the repo's git hooks (per clone, not automatic)
+git config core.hooksPath .githooks
 ```
+
+The hooks are a content check before `commit` (staged added lines, and the
+commit message — `pre-commit` cannot see the message) and the unit tests before
+`push`. The pattern list they check against lives **outside** the repo, at
+`~/.agents/sensitive-patterns/xiaoyu-desk-block.txt`, one ERE per line; a missing
+list warns and passes, so a fresh clone is never blocked. `XIAOYU_SKIP_SENSITIVE=1
+git commit …` skips a confirmed false positive once.
+
+That list is deliberately **not** shared with the sibling `zhinu` repo. "kiro" is
+a leak signal there and a product name in this README, so one shared list would
+stop every commit here and train the habit of skipping the check — which would
+cost the protection of every other pattern in it.
 
 The `xiaoyu-agent` dependency is pinned exactly, not ranged: the adapter reaches
 past xiaoyu's CLI into its library surface (`AcpServer`, `Toolbox`,
