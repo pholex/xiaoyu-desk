@@ -29,23 +29,19 @@ classifiers = [
 # library surface (AcpServer, Toolbox, McpManager), which a release is free to
 # reshape. Upgrading is a deliberate edit plus a test run.
 #
-# 0.33.0 is the floor for a working adapter, not just a preference: it is the
-# first release where `Toolbox(mcp_view=...)` is honored for a FULL toolbox.
+# 0.34.0 is the floor for a working adapter, not just a preference: it is the
+# first release exporting the embedding surface this adapter runs on
+# (`acp.build_agent_factory`, `AcpServer.agent_for`), and the first where an MCP
+# announcement no longer wakes an extra step. 0.33.0 was the floor before that,
+# as the first release honoring `Toolbox(mcp_view=...)` for a FULL toolbox.
 # Before it, the injection was accepted and silently dropped — the session came
 # up healthy with none of the agent spec's MCP servers and the operator's own
 # mcp.json in their place. `factory.py` asserts that behavior at session build
 # rather than trusting this pin, because the fix once existed unreleased under an
 # already-published version number, and no version specifier could tell the two
 # apart. That assertion stays as a sentinel against any future drift.
-# NOTE (branch kernel-0.34-surface): the code on this branch requires xiaoyu's
-# embedding surface — `acp.build_agent_factory` and `AcpServer.agent_for` —
-# which is merged upstream but NOT released. The pin deliberately stays at the
-# last real release: PyPI rejects direct-URL (git) dependencies, so a commit pin
-# could never ship, and naming an unreleased version would be a lie. `cli.serve`
-# checks for the surface by behavior and says "upgrade xiaoyu-agent" rather than
-# crashing. Bump this to ==0.34.0 and drop this note before merging.
 dependencies = [
-    "xiaoyu-agent==0.33.0",
+    "xiaoyu-agent==0.34.0",
 ]
 
 [project.urls]

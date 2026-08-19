@@ -213,12 +213,16 @@ So the adapter reads it and injects:
   wrong guess pre-approves what the operator never approved. Every tool call
   travels the ACP approval bridge to KiroCrew's own prompt instead.
 
-The MCP servers are loaded, and their "server connected" announcement settled,
-**before** the first prompt. xiaoyu delivers that announcement through
-`Agent.notify`, and a notification landing while the model is writing prose is
-re-delivered at the step boundary and forces another step — the model answers the
-same question twice and the client concatenates both replies. It shows up as a
-doubled first answer (`OK` rendering as `OKOK`) and nowhere else.
+The MCP servers are loaded **before** the first prompt, so a session's opening
+turn already has the agent spec's tools rather than being told they do not exist
+and planning around the absence.
+
+This used to do more. A "server connected" announcement landing while the model
+was writing prose forced an extra step, so the model answered the same question
+twice and the client concatenated both — a doubled first answer, `OK` rendering
+as `OKOK`. The adapter carried a workaround that swallowed the first
+announcement. xiaoyu 0.34.0 delivers such announcements without waking a step,
+so the workaround is gone and only the loading order above remains.
 
 `${VAR}` placeholders in server env are passed through unexpanded, so an
 unresolvable one fails in the server that needs it rather than quietly becoming
@@ -263,14 +267,19 @@ The `xiaoyu-agent` dependency is pinned exactly, not ranged: the adapter reaches
 past xiaoyu's CLI into its library surface (`AcpServer`, `Toolbox`,
 `McpManager`), which a release is free to reshape.
 
-`0.33.0` is the floor for a working adapter rather than a preference — it is the
-first release where `Toolbox(mcp_view=...)` is honored for a full toolbox. Before
-it, the injection was accepted and silently dropped: the session came up healthy
-with none of the agent spec's MCP servers and the operator's own `mcp.json` in
-their place. `factory.py` asserts that behavior at session build rather than
-trusting the pin, because the fix once existed unreleased under an
-already-published version number and no version specifier could tell the two
-apart. That assertion stays as a sentinel against future drift.
+`0.34.0` is the floor for a working adapter rather than a preference — it is the
+first release exporting the embedding surface this runs on
+(`acp.build_agent_factory`, `AcpServer.agent_for`), and the first where an MCP
+announcement no longer wakes an extra step.
+
+`factory.py` still asserts, at session build, that the injected `mcp_view`
+actually reached the toolbox. That check outlived the bug it was written for: in
+`0.32.0` the injection was accepted and silently dropped, the session came up
+healthy with none of the agent spec's MCP servers and the operator's own
+`mcp.json` in their place — and the fix existed unreleased under an
+already-published version number, so no version specifier could tell the two
+builds apart. The behavior is contract-tested upstream now; the assertion stays
+as a sentinel, because the pin is the only thing keeping it redundant.
 
 ## Releasing
 

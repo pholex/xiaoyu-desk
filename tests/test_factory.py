@@ -12,11 +12,7 @@ from xiaoyu.mcp import McpManager, McpView, ServerSpec
 from xiaoyu.tools import Toolbox
 
 from xiaoyu_desk.acp.agentspec import AgentSpec
-from xiaoyu_desk.acp.factory import (
-    McpProvider,
-    _settle_mcp_announcement,
-    build_factory,
-)
+from xiaoyu_desk.acp.factory import McpProvider, build_factory
 
 
 def _config() -> Config:
@@ -64,63 +60,6 @@ class TestViewIsHonored(unittest.TestCase):
             finally:
                 provider.close()
         self.assertIn("mcp_view", str(caught.exception))
-
-
-class TestMcpAnnouncementSettling(unittest.TestCase):
-    """The first schema assembly must not be able to notify the agent.
-
-    xiaoyu announces a connected MCP server through Agent.notify, and a
-    notification arriving while the model is writing prose forces an extra step
-    — the model answers twice and the client concatenates both ("OK" -> "OKOK").
-    Settling the announcement before the first turn is what prevents that.
-    """
-
-    @staticmethod
-    def _agent(seen: list[object]):
-        class _Toolbox:
-            notify_hook = None
-
-            def schemas(_self):
-                seen.append(_self.notify_hook)
-                return []
-
-        return mock.Mock(toolbox=_Toolbox())
-
-    def test_schemas_is_assembled_with_a_hook_installed(self):
-        # The subtlety that made a first attempt fail: _announce_mcp returns
-        # early when notify_hook is None and skips its own bookkeeping with it,
-        # so assembling with no hook settles nothing and the announcement fires
-        # again inside the turn.
-        seen: list[object] = []
-        _settle_mcp_announcement(self._agent(seen))
-        self.assertEqual(len(seen), 1)
-        self.assertIsNotNone(seen[0], "schemas() ran with notify_hook=None; nothing was settled")
-
-    def test_the_hook_installed_during_settling_discards_the_message(self):
-        seen: list[object] = []
-        _settle_mcp_announcement(self._agent(seen))
-        # Must accept the (text, key) shape xiaoyu calls it with, and swallow it.
-        self.assertIsNone(seen[0]("MCP server X connected", "mcp-online-X-abc"))
-
-    def test_the_agents_own_hook_is_restored_afterwards(self):
-        # Only the FIRST announcement is swallowed. A server reconnecting later,
-        # or /mcp approve swapping a schema, must still reach the model — so the
-        # detachment cannot outlive the settling.
-        agent = self._agent([])
-        _settle_mcp_announcement(agent)
-        self.assertIs(agent.toolbox.notify_hook, agent.notify)
-
-    def test_the_hook_is_restored_even_when_assembly_fails(self):
-        class _Exploding:
-            notify_hook = None
-
-            def schemas(self):
-                raise RuntimeError("boom")
-
-        agent = mock.Mock(toolbox=_Exploding())
-        with self.assertRaises(RuntimeError):
-            _settle_mcp_announcement(agent)
-        self.assertIs(agent.toolbox.notify_hook, agent.notify)
 
 
 class TestMcpProvider(unittest.TestCase):

@@ -11,8 +11,7 @@ the same chain the xiaoyu CLI runs, exported for embedding hosts. This module
 used to carry a line-by-line fork of it, which drifted — the fork silently
 lacked ``install_exit_logging``, so exit reasons never reached the session log.
 What is left here is only what is genuinely this adapter's: the agent spec's
-prompt and MCP servers going in, and one announcement being settled on the way
-out.
+prompt and MCP servers going in.
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ from .agentspec import AgentSpec
 
 #: How long to wait for the agent spec's MCP servers before starting a session.
 #: Generous because a cold schema cache means real subprocess startup, and the
-#: cost of giving up early is a doubled first answer (see McpProvider.view).
+#: cost of giving up early is a first turn without the agent's tools.
 READY_TIMEOUT_SECS = 30.0
 
 
@@ -59,16 +58,19 @@ class McpProvider:
         the operator's personal ``mcp.json`` — servers the agent spec never
         granted it.
 
-        Blocks until the servers are ready, which is what makes the FIRST answer
-        of a session correct rather than doubled. xiaoyu announces a server
-        coming online through ``Agent.notify``, and a notification that lands
-        while the model is producing prose is re-delivered at the step boundary
-        and **forces another step** — so the model answers the same question
-        twice and the client concatenates both into one reply. Loading the
-        servers before the first prompt keeps that announcement out of a turn.
+        Blocks until the servers are ready, so the session's FIRST turn already
+        has the agent spec's tools. A model that asks for a tool during the one
+        turn the roster was still loading is told it does not exist, and it
+        plans around the absence for the rest of the conversation.
+
         kiro-cli behaves the same way (its servers load during ``session/new``),
         and KiroCrew already tolerates the wait: it tracks MCP init progress for
         exactly this phase.
+
+        This used to carry a second reason — a server announcement landing
+        mid-prose forced an extra step and the model answered twice. xiaoyu
+        0.34.0 delivers that announcement without waking a step, so only the
+        capability reason above is left.
         """
         with self._lock:
             if self._manager is None:
@@ -87,41 +89,6 @@ class McpProvider:
             if self._manager is not None:
                 self._manager.close()
                 self._manager = None
-
-
-def _settle_mcp_announcement(agent: Agent) -> None:
-    """Absorb the MCP roster once, before the agent's first turn can carry it.
-
-    xiaoyu announces "MCP server X connected" through ``Agent.notify`` the first
-    time a toolbox assembles its schemas. That first assembly otherwise happens
-    inside the session's FIRST turn, and a notification that arrives while the
-    model is producing prose is re-delivered at the step boundary and **forces
-    another step** — so the model answers the same question a second time and
-    the client renders both, concatenated. It looks exactly like a duplicated
-    reply ("OK" becoming "OKOK") and only on a session's first answer.
-
-    The announcement is bookkept per (server, tool-set fingerprint), so it fires
-    once and then only on a real change. Assembling here with the hook detached
-    records that bookkeeping, and the in-turn assembly then finds nothing
-    changed. The hook is restored rather than left off: every LATER change — a
-    server reconnecting, ``/mcp approve`` swapping a schema — must still reach
-    the model.
-
-    Detach-and-restore rather than setting the hook before ``Agent`` installs
-    its own: ``build_agent_factory`` constructs the ``Toolbox`` and the ``Agent``
-    in one expression, so there is no seam between them to act in. It works
-    because ``Agent.__init__`` does not assemble schemas itself — it only
-    installs the hook — so the first assembly is still this one.
-
-    All of this is a workaround for the re-step, not for the announcement. If
-    xiaoyu stops letting a notification force an extra step, delete this.
-    """
-    toolbox = agent.toolbox
-    toolbox.notify_hook = lambda *_args, **_kwargs: None
-    try:
-        toolbox.schemas()
-    finally:
-        toolbox.notify_hook = agent.notify
 
 
 def build_factory(
@@ -163,7 +130,6 @@ def build_factory(
                 "session would run without the agent spec's MCP servers and with "
                 "the operator's own mcp.json instead"
             )
-        _settle_mcp_announcement(agent)
         return agent, history
 
     return build_agent
