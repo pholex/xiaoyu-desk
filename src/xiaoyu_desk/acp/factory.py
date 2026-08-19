@@ -16,9 +16,11 @@ prompt and MCP servers going in.
 
 from __future__ import annotations
 
+import sys
 import threading
 from typing import Any, Callable
 
+from xiaoyu import mcp as xiaoyu_mcp
 from xiaoyu.agent import Agent
 from xiaoyu.mcp import McpManager, McpView
 
@@ -37,10 +39,10 @@ class McpProvider:
     servers once per process rather than once per session. Per-session managers
     would multiply every server process by the session count.
 
-    **This class owns processes and nothing else will reap them.** A manager
-    built here is not registered in xiaoyu's process-level manager cache, so the
-    at-exit sweep that covers ``mcp.launch`` managers does not cover this one.
-    ``close`` must run on the way out; see ``cli.serve``.
+    The manager is registered with xiaoyu's process-level at-exit sweep
+    (``launch_specs``), so a crash between here and ``cli.serve``'s ``finally``
+    no longer strands server subprocesses. ``close`` still runs on the way out —
+    the sweep is a backstop, not the plan.
     """
 
     def __init__(self, spec: AgentSpec, ready_timeout: float = READY_TIMEOUT_SECS) -> None:
@@ -74,11 +76,16 @@ class McpProvider:
         """
         with self._lock:
             if self._manager is None:
-                manager = McpManager(self._spec.servers)
-                manager.start()
+                # launch_specs, not McpManager(...): same manager, but enrolled
+                # in the at-exit sweep that reaps stranded subprocesses. It
+                # answers None for an empty roster (nothing to reap), and an
+                # empty roster still needs a real manager to build an empty VIEW
+                # from — that view is what stops Toolbox falling back to config
+                # discovery and handing the session the operator's own mcp.json.
+                manager = xiaoyu_mcp.launch_specs(self._spec.servers) or McpManager([])
                 # Bounded, not indefinite: a server that never becomes ready
-                # must cost a doubled first answer, not a session that never
-                # starts. wait_ready returns as soon as every server has a
+                # must cost a first turn without that tool, not a session that
+                # never starts. wait_ready returns as soon as every server has a
                 # verdict, ready or failed.
                 manager.wait_ready(self._ready_timeout)
                 self._manager = manager
@@ -118,7 +125,36 @@ def build_factory(
         mcp_view=view,
     )
 
+    warned_about_client_servers = False
+
     def build_agent(*args: Any, **kwargs: Any) -> tuple[Agent, list[dict[str, Any]]]:
+        nonlocal warned_about_client_servers
+        client_servers = kwargs.get("mcp_servers")
+        if client_servers and not warned_about_client_servers:
+            warned_about_client_servers = True
+            # KiroCrew's shared MCP gateway is opt-in and off by default, so this
+            # is normally empty. When an operator turns it on, its servers arrive
+            # here and are then dropped: xiaoyu only consults a client roster
+            # when no explicit view was injected, and this adapter always injects
+            # one (the agent spec is what grants a session its tools).
+            #
+            # Merging the two would mean a manager per session — the client
+            # roster arrives with session/new, while this one is process-wide to
+            # match kiro-cli. That is a real change, not a tweak. Until then the
+            # drop is at least audible: silently having fewer tools than the
+            # gateway believes it granted is the failure this project keeps
+            # deleting.
+            #
+            # xiaoyu is silent about this drop at the pinned 0.35.0 and gained
+            # its own notice after it. When the pin moves past that, check
+            # whether both fire; this one stays only for the remedy it names,
+            # which is specific to this adapter.
+            print(
+                f"xiaoyu-desk-acp: ignoring {len(client_servers)} MCP server(s) sent with "
+                "session/new — this backend serves the agent spec's servers only. "
+                "Declare them in the agent spec instead.",
+                file=sys.stderr,
+            )
         agent, history = inner(*args, **kwargs)
         if agent.toolbox.mcp_manager is not view:
             # The agent spec's servers were dropped and config discovery ran in

@@ -15,11 +15,12 @@ Only two of the spec's fields cross into xiaoyu:
     operating instructions, which have no ACP wire field of their own.
 
 ``mcpServers``
-    Translated to ``ServerSpec`` and handed to a caller-owned ``McpManager``.
-    ``${VAR}`` placeholders are passed through unexpanded — constructing a
-    ``ServerSpec`` directly bypasses ``load_server_specs``' expansion, which is
-    the wanted behavior: an unresolvable placeholder should fail in the server
-    that needs it, not silently become an empty string here.
+    Translated to ``ServerSpec`` and handed to a caller-owned ``McpManager``,
+    stdio and Streamable HTTP alike. ``${VAR}`` placeholders are passed through
+    unexpanded — constructing a ``ServerSpec`` directly bypasses
+    ``load_server_specs``' expansion, which is the wanted behavior: an
+    unresolvable placeholder should fail in the server that needs it, not
+    silently become an empty string here.
 
 ``allowedTools`` is deliberately NOT translated. Its entries are kiro tool names
 (``fs_read``, ``execute_bash``) that do not correspond to xiaoyu's tools, so any
@@ -48,7 +49,9 @@ DEFAULT_KIRO_HOME = "~/.kiro"
 #: Cap on a prompt file. Generous for prose; refuses a pathological file.
 _MAX_PROMPT_BYTES = 1024 * 1024
 
-#: Environment the agent spec's MCP servers must inherit from this process.
+#: Environment the agent spec's MCP servers must inherit from this process,
+#: named the way ``ServerSpec.inherit_env`` wants it (exact names and
+#: ``PREFIX_*`` patterns).
 #:
 #: xiaoyu builds a stdio server's environment from a whitelist rather than
 #: inheriting — a sound default for arbitrary third-party servers. But KiroCrew's
@@ -61,17 +64,11 @@ _MAX_PROMPT_BYTES = 1024 * 1024
 #: Nothing here is a credential. The gateway scrubs channel tokens from this
 #: process's environment before spawning it, so what remains is exactly the set
 #: KiroCrew intends its agent tree to carry.
-_FORWARDED_ENV_PREFIXES = ("KIROCREW_",)
-_FORWARDED_ENV_KEYS = ("KIRO_HOME",)
-
-
-def forwarded_env() -> dict[str, str]:
-    """KiroCrew-owned environment this process must pass to its MCP servers."""
-    return {
-        key: value
-        for key, value in os.environ.items()
-        if key.startswith(_FORWARDED_ENV_PREFIXES) or key in _FORWARDED_ENV_KEYS
-    }
+#:
+#: Declared rather than assembled: xiaoyu resolves these at spawn, and its own
+#: precedence (whitelist < inherit_env < the spec's declared env) already puts
+#: the agent spec's word last, which is what this adapter wants.
+INHERIT_ENV = ["KIROCREW_*", "KIRO_HOME"]
 
 
 class AgentSpecError(Exception):
@@ -127,27 +124,48 @@ def _servers_from(raw: object) -> tuple[list[ServerSpec], list[tuple[str, str]]]
             skipped.append((str(name), "not a named JSON object"))
             continue
         command = entry.get("command")
-        if not isinstance(command, str) or not command:
-            # No command means a transport this adapter does not speak (an HTTP
-            # or SSE server). Skipping keeps the stdio ones working.
-            skipped.append(
-                (name, "no command — xiaoyu's ServerSpec speaks stdio only, not HTTP/SSE")
+        url = entry.get("url")
+        if (not isinstance(command, str) or not command) and isinstance(url, str) and url:
+            # Streamable HTTP. xiaoyu runs it through the same admission gates,
+            # circuit breaker and generation bookkeeping as a stdio server; only
+            # the transport differs, so nothing else here changes.
+            #
+            # `type` is not consulted: an entry carrying a url is an HTTP server
+            # by construction. Old-style SSE declares itself the same way and is
+            # NOT supported (xiaoyu advertises `sse: false`), so it arrives here
+            # looking identical and is accepted — then fails in the server with
+            # its own message rather than being guessed at from a field kiro
+            # does not reliably write.
+            headers_raw = entry.get("headers")
+            specs.append(
+                ServerSpec(
+                    name=name,
+                    command="",
+                    url=url,
+                    headers=(
+                        {str(k): str(v) for k, v in headers_raw.items()}
+                        if isinstance(headers_raw, dict)
+                        else {}
+                    ),
+                    disabled=bool(entry.get("disabled", False)),
+                )
             )
+            continue
+        if not isinstance(command, str) or not command:
+            skipped.append((name, "neither a command nor a url — no transport to speak"))
             continue
         args = [str(a) for a in entry.get("args", []) if isinstance(a, (str, int, float))]
         env_raw = entry.get("env")
         declared = (
             {str(k): str(v) for k, v in env_raw.items()} if isinstance(env_raw, dict) else {}
         )
-        # Forwarded first so the spec's own declarations win: the file is the
-        # operator's explicit statement about this server and must not be
-        # overridden by what happens to be in this process's environment.
         specs.append(
             ServerSpec(
                 name=name,
                 command=command,
                 args=args,
-                env={**forwarded_env(), **declared},
+                env=declared,
+                inherit_env=list(INHERIT_ENV),
                 disabled=bool(entry.get("disabled", False)),
             )
         )

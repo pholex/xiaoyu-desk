@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from xiaoyu.config import Config
-from xiaoyu.mcp import McpManager, McpView, ServerSpec
+from xiaoyu.mcp import McpManager, McpView, ServerSpec, launch_specs
 from xiaoyu.tools import Toolbox
 
 from xiaoyu_desk.acp.agentspec import AgentSpec
@@ -62,6 +63,54 @@ class TestViewIsHonored(unittest.TestCase):
         self.assertIn("mcp_view", str(caught.exception))
 
 
+class TestClientSuppliedServers(unittest.TestCase):
+    """Servers KiroCrew sends with session/new are refused audibly.
+
+    xiaoyu consults a client roster only when no explicit view was injected, and
+    this adapter always injects one. Without a word here the gateway believes it
+    granted tools that never arrived — the silent-capability-loss failure this
+    project keeps deleting, just one layer lower.
+    """
+
+    def _run(self, servers):
+        """Drive two session builds and return what landed on stderr.
+
+        The fake agent must report back the very view the factory injected —
+        McpProvider mints a fresh McpView per call, so anything else trips the
+        adapter's own "did the injection take" guard before the notice runs.
+        """
+        provider = McpProvider(AgentSpec(name="a", servers=[]))
+        agent = mock.Mock(toolbox=mock.Mock(schemas=lambda: []))
+
+        def fake_build_agent_factory(*, mcp_view=None, **_kwargs):
+            agent.toolbox.mcp_manager = mcp_view
+            return lambda *a, **k: (agent, [])
+
+        captured = io.StringIO()
+        with mock.patch("xiaoyu.acp.build_agent_factory", fake_build_agent_factory), \
+             mock.patch("sys.stderr", captured):
+            try:
+                factory = build_factory(AgentSpec(name="a"), provider)
+                factory(Path("/tmp"), None, None, "sess-1", True, mcp_servers=servers)
+                factory(Path("/tmp"), None, None, "sess-2", True, mcp_servers=servers)
+            finally:
+                provider.close()
+        return captured.getvalue()
+
+    def test_a_client_roster_is_reported_not_swallowed(self):
+        out = self._run([ServerSpec(name="gw", command="true")])
+        self.assertIn("ignoring 1 MCP server", out)
+
+    def test_the_notice_does_not_repeat_per_session(self):
+        # One line per connection, not one per session/new: a gateway opening
+        # many sessions would otherwise bury its own logs.
+        out = self._run([ServerSpec(name="gw", command="true")])
+        self.assertEqual(out.count("ignoring"), 1)
+
+    def test_no_client_servers_says_nothing(self):
+        self.assertEqual(self._run([]), "")
+
+
 class TestMcpProvider(unittest.TestCase):
     def test_a_spec_with_no_servers_still_yields_a_view(self):
         # Returning None here would let Toolbox fall back to config discovery and
@@ -91,6 +140,29 @@ class TestMcpProvider(unittest.TestCase):
                 provider.close()
         self.assertIsNot(first, second)
         self.assertEqual(constructed.call_count, 1)
+
+    def test_a_real_roster_is_registered_for_the_at_exit_sweep(self):
+        # McpManager(...) directly would work and would leave the subprocesses
+        # stranded if this process died before cli.serve's finally ran.
+        provider = McpProvider(AgentSpec(name="a", servers=[ServerSpec(name="s", command="true")]))
+        with mock.patch(
+            "xiaoyu_desk.acp.factory.xiaoyu_mcp.launch_specs", wraps=launch_specs
+        ) as enrolled:
+            try:
+                provider.view()
+            finally:
+                provider.close()
+        self.assertEqual(enrolled.call_count, 1)
+
+    def test_an_empty_roster_still_yields_a_view_despite_launch_specs(self):
+        # launch_specs answers None for an empty list. Passing that None on to
+        # Toolbox would re-enable config discovery and hand the session the
+        # operator's personal mcp.json — the exact leak the view exists to stop.
+        provider = McpProvider(AgentSpec(name="a", servers=[]))
+        try:
+            self.assertIsInstance(provider.view(), McpView)
+        finally:
+            provider.close()
 
     def test_close_is_idempotent(self):
         # Nothing else reaps these processes, so close runs on every exit path

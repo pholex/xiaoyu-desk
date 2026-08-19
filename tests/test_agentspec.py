@@ -9,7 +9,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from xiaoyu_desk.acp.agentspec import AgentSpecError, agents_dir, forwarded_env, load
+from xiaoyu.mcp import _safe_env
+
+from xiaoyu_desk.acp.agentspec import INHERIT_ENV, AgentSpecError, agents_dir, load
 
 
 def _write(directory: Path, name: str, data: dict) -> None:
@@ -86,7 +88,10 @@ class TestLoad(unittest.TestCase):
         self.assertEqual(spec.prompt, "p")
         self.assertEqual(spec.servers, [])
 
-    def test_non_stdio_server_is_skipped_not_fatal(self):
+    def test_stdio_and_http_servers_both_survive_translation(self):
+        # An HTTP entry used to vanish here, silently costing the model those
+        # tools. xiaoyu speaks Streamable HTTP now, so both transports land and
+        # nothing is skipped.
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
             _write(directory, "a", {
@@ -96,11 +101,8 @@ class TestLoad(unittest.TestCase):
                 }
             })
             spec = load("a", directory)
-        self.assertEqual([s.name for s in spec.servers], ["local"])
-        # …and the skip is recorded rather than dropped on the floor: a server
-        # that vanishes without a word is a tool the model silently lacks.
-        self.assertEqual([name for name, _reason in spec.skipped], ["remote"])
-        self.assertIn("stdio", spec.skipped[0][1])
+        self.assertEqual([s.name for s in spec.servers], ["remote", "local"])
+        self.assertEqual(spec.skipped, [])
 
     def test_a_malformed_entry_is_recorded_too(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -117,35 +119,64 @@ class TestLoad(unittest.TestCase):
             spec = load("a", directory)
         self.assertEqual(spec.skipped, [])
 
-    def test_kirocrew_env_is_forwarded_to_servers(self):
+    def test_servers_declare_the_kirocrew_env_they_must_inherit(self):
         # xiaoyu builds a stdio server's env from a whitelist rather than
         # inheriting it. KiroCrew's own servers need KIROCREW_HOME or they bind
         # to the DEFAULT data home — on a machine running a second instance that
         # means they read and dial the WRONG one, silently.
-        with mock.patch.dict(os.environ, {"KIROCREW_HOME": "/data/home", "KIRO_HOME": "/k"}):
-            with tempfile.TemporaryDirectory() as tmp:
-                directory = Path(tmp)
-                _write(directory, "a", {"mcpServers": {"s": {"command": "x"}}})
-                spec = load("a", directory)
-        self.assertEqual(spec.servers[0].env["KIROCREW_HOME"], "/data/home")
-        self.assertEqual(spec.servers[0].env["KIRO_HOME"], "/k")
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            _write(directory, "a", {"mcpServers": {"s": {"command": "x"}}})
+            spec = load("a", directory)
+        self.assertEqual(spec.servers[0].inherit_env, INHERIT_ENV)
 
-    def test_spec_env_wins_over_forwarded_env(self):
+    def test_the_declared_inheritance_actually_reaches_a_spawned_env(self):
+        # Declaring inherit_env is worthless if xiaoyu resolves it differently
+        # than intended, and the failure would be silent — servers binding to
+        # the wrong data home, exactly as before. So assert against xiaoyu's own
+        # env builder rather than trusting the field name.
+        with mock.patch.dict(
+            os.environ,
+            {"KIROCREW_HOME": "/data/home", "KIRO_HOME": "/k", "AWS_SECRET_ACCESS_KEY": "x"},
+        ):
+            env = _safe_env(inherit=INHERIT_ENV)
+        self.assertEqual(env["KIROCREW_HOME"], "/data/home")
+        self.assertEqual(env["KIRO_HOME"], "/k")
+        # The patterns are narrow on purpose; nothing else rides along.
+        self.assertNotIn("AWS_SECRET_ACCESS_KEY", env)
+
+    def test_spec_env_still_wins_over_what_is_inherited(self):
         # The file is the operator's explicit statement about this server.
+        # xiaoyu's precedence is whitelist < inherit_env < the spec's own env.
         with mock.patch.dict(os.environ, {"KIROCREW_HOME": "/from/env"}):
-            with tempfile.TemporaryDirectory() as tmp:
-                directory = Path(tmp)
-                _write(directory, "a", {
-                    "mcpServers": {"s": {"command": "x", "env": {"KIROCREW_HOME": "/from/spec"}}}
-                })
-                spec = load("a", directory)
-        self.assertEqual(spec.servers[0].env["KIROCREW_HOME"], "/from/spec")
+            env = _safe_env(extra={"KIROCREW_HOME": "/from/spec"}, inherit=INHERIT_ENV)
+        self.assertEqual(env["KIROCREW_HOME"], "/from/spec")
 
-    def test_forwarded_env_carries_no_unrelated_variables(self):
-        with mock.patch.dict(os.environ, {"KIROCREW_HOME": "/h", "AWS_SECRET_ACCESS_KEY": "x"}):
-            forwarded = forwarded_env()
-        self.assertIn("KIROCREW_HOME", forwarded)
-        self.assertNotIn("AWS_SECRET_ACCESS_KEY", forwarded)
+    def test_an_http_server_is_translated_rather_than_skipped(self):
+        # Before xiaoyu spoke Streamable HTTP these vanished at parse time and
+        # the model quietly lacked those tools.
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            _write(directory, "a", {
+                "mcpServers": {
+                    "remote": {"url": "https://example.invalid/mcp",
+                               "headers": {"Authorization": "Bearer t"}},
+                }
+            })
+            spec = load("a", directory)
+        self.assertEqual(spec.skipped, [])
+        server = spec.servers[0]
+        self.assertEqual(server.url, "https://example.invalid/mcp")
+        self.assertEqual(server.headers, {"Authorization": "Bearer t"})
+        self.assertEqual(server.command, "")
+
+    def test_an_entry_with_neither_command_nor_url_is_still_recorded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            _write(directory, "a", {"mcpServers": {"nothing": {"args": ["x"]}}})
+            spec = load("a", directory)
+        self.assertEqual(spec.servers, [])
+        self.assertEqual([name for name, _r in spec.skipped], ["nothing"])
 
     def test_file_url_prompt_is_dereferenced(self):
         # KiroCrew writes a file:// URL here, not the prose. Taken literally the

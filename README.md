@@ -75,10 +75,13 @@ a script. **If you report a problem, please include its output.**
   running the wrong agent.
 - **xiaoyu's own interaction modes are unreachable.** KiroCrew reads the ACP
   `modes` list as an agent selector, so the adapter has to overwrite it with the
-  single spawned agent — which leaves xiaoyu's `plan` and `auto` modes with
-  nowhere to be advertised. Every KiroCrew session therefore runs in xiaoyu's
-  `default` mode, confirming writes and commands one by one. Tool approval itself
-  works normally; it is only the mode *switch* that has no channel.
+  single spawned agent. xiaoyu also publishes mode the standards-track way, as a
+  `configOptions` entry in the `mode` category — but KiroCrew consumes only the
+  `effort` entry from that array and renders no other option, so the switch has
+  nowhere to surface. Every KiroCrew session runs in xiaoyu's `default` mode,
+  confirming writes and commands one by one. Tool approval itself works normally;
+  it is only the mode *switch* that has no channel. Fixing this is now KiroCrew's
+  side to do, not xiaoyu's.
 - **Compaction status, agent-switched notices, and the TODO panel stay empty.**
   Those are `kiro-cli`-specific notifications that xiaoyu never emits. Nothing
   breaks; the panels just have nothing to show.
@@ -207,7 +210,9 @@ So the adapter reads it and injects:
 - `mcpServers` → `ServerSpec` records handed to an adapter-owned `McpManager`,
   which **replaces** xiaoyu's own config discovery rather than merging with it.
   The agent spec is the single source of truth for what the session may reach;
-  the operator's personal `mcp.json` does not leak in.
+  the operator's personal `mcp.json` does not leak in. stdio and Streamable HTTP
+  entries both translate; old-style SSE does not (xiaoyu advertises `sse: false`)
+  and `doctor` names anything that fell out.
 - `allowedTools` → **deliberately not translated.** Its entries are kiro tool
   names that do not name xiaoyu tools, so any mapping would be a guess, and a
   wrong guess pre-approves what the operator never approved. Every tool call
@@ -235,11 +240,18 @@ and friends *are* KiroCrew, and without `KIROCREW_HOME` they resolve the
 **default** data home rather than this session's. On a machine running a second
 instance that means they read state from, and dial the gateway of, the wrong
 one — silently, because reads succeed against a real instance and only calls
-needing a session identity are refused. So the adapter forwards `KIROCREW_*` and
-`KIRO_HOME` into each server's env, restoring the footing kiro-cli's servers get
-by plain inheritance. A value declared in the agent spec always wins over the
-forwarded one, and nothing forwarded is a credential — the gateway scrubs channel
+needing a session identity are refused. So each spec declares
+`inherit_env = ["KIROCREW_*", "KIRO_HOME"]` and xiaoyu resolves it at spawn,
+restoring the footing kiro-cli's servers get by plain inheritance. Its precedence
+is whitelist < inherited < the spec's own `env`, so a value declared in the agent
+spec always wins. Nothing inherited is a credential — the gateway scrubs channel
 tokens from this process's environment before it is spawned.
+
+**Servers KiroCrew sends with `session/new` are refused out loud.** Its shared
+MCP gateway is opt-in and off by default, so this is normally empty; when it is
+on, those servers are *not* merged, because the agent spec is what grants a
+session its tools. The adapter says so on stderr rather than letting the gateway
+believe it granted tools that never arrived.
 
 ## Development
 

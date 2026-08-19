@@ -29,11 +29,13 @@ classifiers = [
 # library surface (AcpServer, Toolbox, McpManager), which a release is free to
 # reshape. Upgrading is a deliberate edit plus a test run.
 #
-# 0.34.0 is the floor for a working adapter, not just a preference: it is the
-# first release exporting the embedding surface this adapter runs on
-# (`acp.build_agent_factory`, `AcpServer.agent_for`), and the first where an MCP
-# announcement no longer wakes an extra step. 0.33.0 was the floor before that,
-# as the first release honoring `Toolbox(mcp_view=...)` for a FULL toolbox.
+# 0.35.0 is the floor for a working adapter, not just a preference: it is the
+# first release with Streamable HTTP MCP servers, `ServerSpec.inherit_env` and
+# `mcp.launch_specs`, all of which this adapter now depends on rather than
+# reimplements. 0.34.0 was the floor before it (the embedding surface —
+# `acp.build_agent_factory`, `AcpServer.agent_for` — and an MCP announcement
+# that no longer wakes an extra step), and 0.33.0 before that, as the first
+# release honoring `Toolbox(mcp_view=...)` for a FULL toolbox.
 # Before it, the injection was accepted and silently dropped — the session came
 # up healthy with none of the agent spec's MCP servers and the operator's own
 # mcp.json in their place. `factory.py` asserts that behavior at session build
@@ -41,7 +43,7 @@ classifiers = [
 # already-published version number, and no version specifier could tell the two
 # apart. That assertion stays as a sentinel against any future drift.
 dependencies = [
-    "xiaoyu-agent==0.34.0",
+    "xiaoyu-agent==0.35.0",
 ]
 
 [project.urls]

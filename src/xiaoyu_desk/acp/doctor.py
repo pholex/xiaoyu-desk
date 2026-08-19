@@ -8,7 +8,8 @@ looks healthy and behaves wrong:
 * agent spec missing → ``session/new`` fails, and the message names ACP internals
 * prompt left as a ``file://`` URL → the model runs on none of its instructions
 * an ``mcpServers`` entry the adapter cannot translate → it is dropped at parse
-  time and the model quietly lacks those tools
+  time and the model quietly lacks those tools (rarer since xiaoyu speaks
+  Streamable HTTP: only old-style SSE and malformed entries fall here)
 * an xiaoyu build that drops ``mcp_view`` → the session silently gets the
   operator's personal ``mcp.json`` instead of the agent spec's servers
 * ``dashboard.url`` unset on a non-default port → MCP servers dial *another*
