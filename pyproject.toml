@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "xiaoyu-desk"
 dynamic = ["version"]
-description = "Xiaoyu Desk — a KiroCrew distribution driven by the xiaoyu agent"
+description = "羽案 — a KiroCrew distribution driven by the xiaoyu agent"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

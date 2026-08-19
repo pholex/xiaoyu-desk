@@ -1,4 +1,4 @@
-# Xiaoyu Desk
+# 羽案 · Xiaoyu Desk
 
 Run [KiroCrew](https://github.com/kirodotdev/KiroCrew) on the
 [xiaoyu](https://github.com/pholex/zhinu) agent instead of `kiro-cli`.
