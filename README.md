@@ -47,6 +47,23 @@ or by putting it in whatever launches your gateway.
 
 To go back to `kiro-cli`, unset the variable. Nothing else changes.
 
+## Check the setup
+
+```bash
+xiaoyu-desk-acp doctor
+```
+
+Every failure this adapter can have is silent — a session starts, looks healthy,
+and behaves wrong. `doctor` runs those checks up front and names the one that is
+broken: provider configured, agent spec readable, system prompt dereferenced, MCP
+servers declared and actually injected, `KIROCREW_KIRO_BIN` pointing here, the
+macOS sandbox delegation flag, and whether a gateway on a custom port will be
+reachable by its own MCP servers.
+
+It calls no model, spawns no MCP server, and needs no running gateway, so it is
+safe to run at any time. Exit code is non-zero if anything failed, so it can gate
+a script. **If you report a problem, please include its output.**
+
 ## Known limitations
 
 **Read this before relying on it.** The first two are the ones people hit.

@@ -10,6 +10,10 @@ all of which this entry point answers::
     <bin> acp --agent NAME [--model ID]   # the ACP session itself
     <bin> chat --list-models --format json --no-interactive   # the model picker
 
+One command is for people rather than KiroCrew:
+
+    <bin> doctor [--agent NAME]   # check the setup before a session needs it
+
 Unknown flags are tolerated rather than rejected. The argv is built by another
 program on its own release schedule, and a new flag there must not turn every
 session into a spawn failure.
@@ -30,6 +34,9 @@ from .proxy import DialectStdin, DialectStdout, KiroDialect
 #: Printed by ``whoami``. KiroCrew's readiness probe only requires a zero exit
 #: with output; the string names what is actually answering.
 IDENTITY = "xiaoyu-desk (xiaoyu agent backend)"
+
+#: The agent `doctor` checks when none is named. KiroCrew's managed default.
+DEFAULT_AGENT = "kirocrew"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -133,12 +140,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     parsed, _unknown = _parser().parse_known_args(args)
+    if parsed.command == "doctor":
+        from .doctor import run
+
+        return run(parsed.agent or DEFAULT_AGENT, parsed.agents_dir)
     if parsed.command == "chat" and parsed.list_models:
         return list_models()
     if parsed.command != "acp":
         print(
             f"xiaoyu-desk-acp: unknown command {parsed.command!r} "
-            "(expected 'acp', 'chat --list-models', '--version', or 'whoami')",
+            "(expected 'acp', 'doctor', 'chat --list-models', '--version', or 'whoami')",
             file=sys.stderr,
         )
         return 2
