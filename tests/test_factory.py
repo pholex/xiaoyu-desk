@@ -127,19 +127,19 @@ class TestMcpProvider(unittest.TestCase):
     def test_sessions_share_one_manager(self):
         # Per-session managers would multiply every server process by the session
         # count; kiro-cli starts its servers once per process. Asserted by
-        # counting constructions rather than by reading the manager back off a
-        # view: McpView's contract is that it holds no process and its lifetime
-        # belongs to the manager, so it deliberately offers no reverse lookup.
+        # counting launches rather than by reading the manager back off a view:
+        # McpView's contract is that it holds no process and its lifetime belongs
+        # to the manager, so it deliberately offers no reverse lookup.
         provider = McpProvider(AgentSpec(name="a", servers=[]))
         with mock.patch(
-            "xiaoyu_desk.acp.factory.McpManager", wraps=McpManager
-        ) as constructed:
+            "xiaoyu_desk.acp.factory.xiaoyu_mcp.launch_specs", wraps=launch_specs
+        ) as launched:
             try:
                 first, second = provider.view(), provider.view()
             finally:
                 provider.close()
         self.assertIsNot(first, second)
-        self.assertEqual(constructed.call_count, 1)
+        self.assertEqual(launched.call_count, 1)
 
     def test_a_real_roster_is_registered_for_the_at_exit_sweep(self):
         # McpManager(...) directly would work and would leave the subprocesses
@@ -154,10 +154,12 @@ class TestMcpProvider(unittest.TestCase):
                 provider.close()
         self.assertEqual(enrolled.call_count, 1)
 
-    def test_an_empty_roster_still_yields_a_view_despite_launch_specs(self):
-        # launch_specs answers None for an empty list. Passing that None on to
-        # Toolbox would re-enable config discovery and hand the session the
-        # operator's personal mcp.json — the exact leak the view exists to stop.
+    def test_an_empty_roster_still_yields_a_view(self):
+        # An empty roster must still produce a real view: a None view would
+        # re-enable config discovery and hand the session the operator's personal
+        # mcp.json — the exact leak the view exists to stop. launch_specs used to
+        # answer None here, which this call site had to paper over; since 0.36.0
+        # it answers an empty manager instead, so the leak has no way back in.
         provider = McpProvider(AgentSpec(name="a", servers=[]))
         try:
             self.assertIsInstance(provider.view(), McpView)

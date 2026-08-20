@@ -78,11 +78,13 @@ class McpProvider:
             if self._manager is None:
                 # launch_specs, not McpManager(...): same manager, but enrolled
                 # in the at-exit sweep that reaps stranded subprocesses. It
-                # answers None for an empty roster (nothing to reap), and an
-                # empty roster still needs a real manager to build an empty VIEW
-                # from — that view is what stops Toolbox falling back to config
-                # discovery and handing the session the operator's own mcp.json.
-                manager = xiaoyu_mcp.launch_specs(self._spec.servers) or McpManager([])
+                # answers a real manager for an empty roster too, since 0.36.0 —
+                # before that it answered None, and this call site had to build
+                # the empty manager itself, because an empty roster still needs a
+                # real manager to build an empty VIEW from. That view is what
+                # stops Toolbox falling back to config discovery and handing the
+                # session the operator's own mcp.json.
+                manager = xiaoyu_mcp.launch_specs(self._spec.servers)
                 # Bounded, not indefinite: a server that never becomes ready
                 # must cost a first turn without that tool, not a session that
                 # never starts. wait_ready returns as soon as every server has a
@@ -145,10 +147,11 @@ def build_factory(
             # gateway believes it granted is the failure this project keeps
             # deleting.
             #
-            # xiaoyu is silent about this drop at the pinned 0.35.0 and gained
-            # its own notice after it. When the pin moves past that, check
-            # whether both fire; this one stays only for the remedy it names,
-            # which is specific to this adapter.
+            # Since 0.36.0 xiaoyu prints its own line for the same drop
+            # (``acp.resolve_mcp_view``), so both fire — checked against that
+            # release, not assumed. This one stays for the remedy it names,
+            # which is specific to this adapter; it also says it once per
+            # connection where xiaoyu's repeats per session.
             print(
                 f"xiaoyu-desk-acp: ignoring {len(client_servers)} MCP server(s) sent with "
                 "session/new — this backend serves the agent spec's servers only. "

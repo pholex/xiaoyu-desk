@@ -252,7 +252,10 @@ tokens from this process's environment before it is spawned.
 MCP gateway is opt-in and off by default, so this is normally empty; when it is
 on, those servers are *not* merged, because the agent spec is what grants a
 session its tools. The adapter says so on stderr rather than letting the gateway
-believe it granted tools that never arrived.
+believe it granted tools that never arrived. Since `0.36.0` xiaoyu prints its own
+line for the same drop, so an operator sees two: xiaoyu's once per session, and
+this adapter's once per connection, naming the remedy (declare the servers in the
+agent spec).
 
 ## Development
 
@@ -280,10 +283,16 @@ The `xiaoyu-agent` dependency is pinned exactly, not ranged: the adapter reaches
 past xiaoyu's CLI into its library surface (`AcpServer`, `Toolbox`,
 `McpManager`), which a release is free to reshape.
 
-`0.34.0` is the floor for a working adapter rather than a preference — it is the
-first release exporting the embedding surface this runs on
-(`acp.build_agent_factory`, `AcpServer.agent_for`), and the first where an MCP
-announcement no longer wakes an extra step.
+`0.36.0` is the floor for a working adapter rather than a preference — it is the
+first release where `mcp.launch_specs` answers a real manager for an *empty*
+roster instead of `None`. `factory.py` depends on that rather than papering over
+the `None`, because a `None` view means "fall back to config discovery", which
+hands the session the operator's own `mcp.json` — servers the agent spec never
+granted it. Earlier floors, each still load-bearing: `0.35.0` for Streamable HTTP
+MCP servers, `ServerSpec.inherit_env` and `mcp.launch_specs` itself; `0.34.0` for
+the embedding surface this runs on (`acp.build_agent_factory`,
+`AcpServer.agent_for`) and for an MCP announcement that no longer wakes an extra
+step.
 
 `factory.py` still asserts, at session build, that the injected `mcp_view`
 actually reached the toolbox. That check outlived the bug it was written for: in
